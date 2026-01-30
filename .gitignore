@@ -1,0 +1,6 @@
+.DS_Store
+.swiftpm/
+xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+UserInterfaceState.xcuserstate

@@ -27,7 +27,8 @@ let package = Package(
         ),
         .target(
             name: "Core",
-            path: "Core"
+            path: "Core",
+            exclude: ["DB"]
         ),
         .target(
             name: "CoreDB",
