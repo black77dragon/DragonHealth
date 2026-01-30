@@ -1,17 +1,12 @@
 # DragonHealth
 
-Personal iOS health app.
+DragonHealth is a personal iOS health app focused on portion-based nutrition tracking, sports activity logging, and body metric trend analysis.
 
 ## Documentation
 
 - Architecture: [docs/architecture.md](docs/architecture.md)
-
-Personal iOS Health App.
-
-## Architecture
-
 - Navigation and view hierarchy: [docs/architecture/navigation.md](docs/architecture/navigation.md)
-DragonHealth is a personal iOS health app focused on portion-based nutrition tracking, sports activity logging, and body metric trend analysis.
+- Repository structure: [Docs/file-structure.md](Docs/file-structure.md)
 
 ## Product Specification
 
@@ -32,19 +27,3 @@ The product specification is the source of truth for requirements and implementa
 ## Status
 
 Early specification phase; implementation has not started.
-
-Personal iOS nutrition tracker.
-
-## Repository structure
-
-This repository is organized for a clean separation between UI, domain, and infrastructure. See the detailed structure guide in `Docs/file-structure.md`.
-
-- `App/`: SwiftUI entry point, navigation, presentation
-- `Core/`: Domain models and use cases (pure Swift)
-- `Core/DB/`: Database gateway protocols and abstractions
-- `Infra/`: Config, logging, feature flags, and DB implementations
-- `Resources/`: Assets and templates
-- `Scripts/`: Automation scripts (setup, lint, migrations)
-- `Tests/`: Unit, integration, and UI tests
-- `Docs/`: Specifications and architecture docs
-

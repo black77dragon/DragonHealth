@@ -3,7 +3,7 @@
 ## Assumptions and Scope
 - iOS 17+
 - SwiftUI
-- SwiftData (local persistence)
+- SQLite persistence via Core/DB gateway and a single DatabaseActor
 - No backend
 - Single user
 - Feature growth likely (HealthKit, widgets, rules engine)
@@ -15,17 +15,17 @@ High-level structure:
 UI (SwiftUI Views)
   -> ViewModels (state + intent)
   -> Domain Layer (rules and calculations)
-  -> Persistence (SwiftData)
+  -> Persistence (SQLite via Core/DB + Infra)
 
 This is a pragmatic, SwiftUI-native architecture that is testable and resists "fat ViewModel" drift.
 
 ## Why This Fits DragonHealth
 
-- Offline-first: no repository abstraction needed.
+- Offline-first: clear boundaries for domain rules and storage.
 - Rule-heavy (targets, banking, tolerance): needs a Domain layer.
 - SwiftUI: MVVM is native.
 - Single-user: no session or multi-user context.
-- Long-lived data: SwiftData direct access OK.
+- Long-lived data: SQLite storage remains local and predictable.
 
 ## Core Layers
 
@@ -81,7 +81,7 @@ final class MealDetailViewModel {
 
 Core domain services:
 
-Domain/
+Core/
 - PortionEngine
 - TargetEvaluator
 - AdherenceEngine
@@ -90,7 +90,7 @@ Domain/
 
 These are pure Swift types:
 - No SwiftUI
-- No SwiftData
+- No database access
 - No environment dependencies
 
 Example:
@@ -107,9 +107,9 @@ Why this matters:
 - Future-proof (HealthKit, widgets)
 - Avoids logic duplication across screens
 
-### Persistence Layer (SwiftData)
+### Persistence Layer (SQLite)
 
-SwiftData is storage, not architecture.
+SQLite is storage, not architecture.
 
 Rules:
 - Models are dumb
@@ -118,8 +118,7 @@ Rules:
 
 Example:
 
-@Model
-final class DayLog {
+struct DayLog {
     var date: Date
     var meals: [MealEntry]
 }
@@ -135,33 +134,27 @@ Those belong in Domain.
 DragonHealth/
 - App/
   - DragonHealthApp.swift
-- UI/
-  - Today/
-    - TodayView.swift
-    - TodayViewModel.swift
-    - DailySummaryView.swift
-  - History/
-  - Body/
-  - Library/
-  - Settings/
-- Domain/
+- Core/
   - PortionEngine.swift
   - TargetRule.swift
   - TargetEvaluator.swift
   - AdherenceEngine.swift
   - StreakEngine.swift
   - BodyTrendCalculator.swift
-- Data/
-  - Models/
-    - DayLog.swift
-    - MealEntry.swift
-    - Category.swift
-    - BodyMetric.swift
-  - SeedData.swift
-- Infrastructure/
-  - DateProvider.swift
-  - ExportService.swift
-  - PDFRenderer.swift
+- Core/DB/
+  - DBGateway.swift
+  - DatabaseActor.swift
+- Infra/
+  - Logging/
+  - Config/
+  - FeatureFlags/
+- Resources/
+  - Assets/
+  - Templates/
+- Tests/
+  - Unit/
+  - Integration/
+  - UI/
 
 ## Data Flow Example
 
@@ -170,7 +163,7 @@ DragonHealth/
 MealDetailView
   -> MealDetailViewModel.addPortion()
   -> PortionEngine.addPortion()
-  -> SwiftData mutation
+  -> DatabaseActor mutation
   -> TargetEvaluator recompute
   -> AdherenceEngine recompute
   -> UI updates automatically
@@ -185,9 +178,9 @@ No view-to-view coupling.
    - Domain services must be pure Swift.
    - Testable and reusable.
 
-2. SwiftData access strategy
-   - ViewModels access SwiftData directly.
-   - Repository pattern is overkill here.
+2. Persistence access strategy
+   - ViewModels call Core domain services.
+   - Core uses Core/DB gateways backed by Infra implementations.
 
 3. Global state vs scoped ViewModels
    - One ViewModel per screen.
@@ -228,4 +221,4 @@ ViewModels
 Domain Services
   |
   v
-SwiftData
+SQLite
