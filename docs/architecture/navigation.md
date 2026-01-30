@@ -13,7 +13,7 @@ This document stores the 1:1 mapping between wireframes and SwiftUI views and th
 ## Assumptions and Scope
 
 - iOS 17+
-- SwiftUI + SwiftData
+- SwiftUI + SQLite via DatabaseActor
 - Tab-based navigation
 - NavigationStack per tab (Apple best practice)
 - Single-window app
@@ -365,12 +365,12 @@ stateDiagram-v2
 - Avoid modals except for:
   - date picker
   - export confirmation
-- Use @Environment(\.modelContext) for persistence.
+- Use DatabaseActor access through view models for persistence.
 
 ## Next High-Value Artifacts
 
 If you want to continue in a build-ready way, the natural next steps are:
-1. SwiftData schema (models + relationships)
+1. SQLite schema (tables + relationships)
 2. Portion calculation engine
 3. Adherence evaluation service
 4. Preview mocks for each SwiftUI view
