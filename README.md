@@ -1,5 +1,10 @@
 # DragonHealth
 
+Personal iOS health app.
+
+## Documentation
+
+- Architecture: [docs/architecture.md](docs/architecture.md)
 
 Personal iOS Health App.
 
@@ -42,3 +47,4 @@ This repository is organized for a clean separation between UI, domain, and infr
 - `Scripts/`: Automation scripts (setup, lint, migrations)
 - `Tests/`: Unit, integration, and UI tests
 - `Docs/`: Specifications and architecture docs
+
