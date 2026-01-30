@@ -17,11 +17,11 @@ public struct AppLogger: Sendable {
     }
 
     public func info(_ message: String, metadata: [String: String] = [:]) {
-        logger.info("\(message, privacy: .public) \(formatted(metadata), privacy: .public)")
+        logger.info("\(message, privacy: .private) \(formatted(metadata), privacy: .private)")
     }
 
     public func error(_ message: String, metadata: [String: String] = [:]) {
-        logger.error("\(message, privacy: .public) \(formatted(metadata), privacy: .public)")
+        logger.error("\(message, privacy: .private) \(formatted(metadata), privacy: .private)")
     }
 
     private func formatted(_ metadata: [String: String]) -> String {
