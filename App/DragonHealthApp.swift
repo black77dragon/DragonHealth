@@ -25,12 +25,13 @@ struct DragonHealthApp: App {
 @MainActor
 struct ContentView: View {
     let config: AppConfig
-    let featureFlags: InMemoryFeatureFlagService
+    let featureFlags: FeatureFlagService
     let logger: AppLogger
 
     var body: some View {
         VStack(spacing: 12) {
-            Text("DragonHealth MVP")
+            Text("DragonHealth iOS MVP")
+
                 .font(.title)
             Text("Implementation in progress")
                 .font(.body)

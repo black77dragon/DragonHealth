@@ -1,7 +1,9 @@
 # DragonHealth MVP
 
 ## Purpose
-Define the minimum viable product scope and the initial implementation plan for the first executable macOS build.
+
+Define the minimum viable product scope and the initial implementation plan for the first executable iOS build.
+=======
 
 ## Scope (confirmed)
 - Today screen with single quick-add logging flow and meal picker.
