@@ -1,2 +1,7 @@
 # DragonHealth
-personal IOS Health App
+
+Personal iOS health app.
+
+## Documentation
+
+- Architecture: [docs/architecture.md](docs/architecture.md)
