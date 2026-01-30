@@ -25,7 +25,7 @@ struct DragonHealthApp: App {
 @MainActor
 struct ContentView: View {
     let config: AppConfig
-    let featureFlags: InMemoryFeatureFlagService
+    let featureFlags: FeatureFlagService
     let logger: AppLogger
 
     var body: some View {
