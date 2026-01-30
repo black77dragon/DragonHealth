@@ -31,6 +31,7 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 12) {
             Text("DragonHealth iOS MVP")
+
                 .font(.title)
             Text("Implementation in progress")
                 .font(.body)
