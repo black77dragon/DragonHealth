@@ -25,6 +25,31 @@ public struct Category: Identifiable, Hashable, Sendable {
     }
 }
 
+public struct FoodUnit: Identifiable, Hashable, Sendable {
+    public let id: UUID
+    public var name: String
+    public var symbol: String
+    public var allowsDecimal: Bool
+    public var isEnabled: Bool
+    public var sortOrder: Int
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        symbol: String,
+        allowsDecimal: Bool = true,
+        isEnabled: Bool = true,
+        sortOrder: Int
+    ) {
+        self.id = id
+        self.name = name
+        self.symbol = symbol
+        self.allowsDecimal = allowsDecimal
+        self.isEnabled = isEnabled
+        self.sortOrder = sortOrder
+    }
+}
+
 public struct MealSlot: Identifiable, Hashable, Sendable {
     public let id: UUID
     public var name: String
@@ -43,6 +68,8 @@ public struct DailyLogEntry: Identifiable, Hashable, Sendable {
     public let mealSlotID: UUID
     public let categoryID: UUID
     public let portion: Portion
+    public let amountValue: Double?
+    public let amountUnitID: UUID?
     public let notes: String?
     public let foodItemID: UUID?
 
@@ -52,6 +79,8 @@ public struct DailyLogEntry: Identifiable, Hashable, Sendable {
         mealSlotID: UUID,
         categoryID: UUID,
         portion: Portion,
+        amountValue: Double? = nil,
+        amountUnitID: UUID? = nil,
         notes: String? = nil,
         foodItemID: UUID? = nil
     ) {
@@ -60,6 +89,8 @@ public struct DailyLogEntry: Identifiable, Hashable, Sendable {
         self.mealSlotID = mealSlotID
         self.categoryID = categoryID
         self.portion = portion
+        self.amountValue = amountValue
+        self.amountUnitID = amountUnitID
         self.notes = notes
         self.foodItemID = foodItemID
     }
@@ -140,6 +171,8 @@ public struct FoodItem: Identifiable, Hashable, Sendable {
     public var name: String
     public var categoryID: UUID
     public var portionEquivalent: Double
+    public var amountPerPortion: Double?
+    public var unitID: UUID?
     public var notes: String?
     public var isFavorite: Bool
     public var imagePath: String?
@@ -149,6 +182,8 @@ public struct FoodItem: Identifiable, Hashable, Sendable {
         name: String,
         categoryID: UUID,
         portionEquivalent: Double,
+        amountPerPortion: Double? = nil,
+        unitID: UUID? = nil,
         notes: String? = nil,
         isFavorite: Bool = false,
         imagePath: String? = nil
@@ -157,6 +192,8 @@ public struct FoodItem: Identifiable, Hashable, Sendable {
         self.name = name
         self.categoryID = categoryID
         self.portionEquivalent = portionEquivalent
+        self.amountPerPortion = amountPerPortion
+        self.unitID = unitID
         self.notes = notes
         self.isFavorite = isFavorite
         self.imagePath = imagePath

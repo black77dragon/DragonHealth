@@ -6,6 +6,9 @@ public protocol DBGateway: Sendable {
     func upsertCategory(_ category: Core.Category) async throws
     func deleteCategory(id: UUID) async throws
 
+    func fetchUnits() async throws -> [Core.FoodUnit]
+    func upsertUnit(_ unit: Core.FoodUnit) async throws
+
     func fetchMealSlots() async throws -> [Core.MealSlot]
     func upsertMealSlot(_ mealSlot: Core.MealSlot) async throws
     func deleteMealSlot(id: UUID) async throws

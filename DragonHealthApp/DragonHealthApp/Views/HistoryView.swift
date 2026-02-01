@@ -83,9 +83,10 @@ struct HistoryView: View {
                 categories: store.categories.filter { $0.isEnabled },
                 mealSlots: store.mealSlots,
                 foodItems: store.foodItems,
+                units: store.units,
                 preselectedCategoryID: nil,
                 contextDate: selectedDate,
-                onSave: { mealSlot, category, portion, notes, foodItemID in
+                onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
                         let calendar = store.appCalendar
                         let reference = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: selectedDate) ?? selectedDate
@@ -94,6 +95,8 @@ struct HistoryView: View {
                             mealSlotID: mealSlot.id,
                             categoryID: category.id,
                             portion: Portion(portion),
+                            amountValue: amountValue,
+                            amountUnitID: amountUnitID,
                             notes: notes,
                             foodItemID: foodItemID
                         )
@@ -108,13 +111,16 @@ struct HistoryView: View {
                 categories: store.categories,
                 mealSlots: store.mealSlots,
                 foodItems: store.foodItems,
-                onSave: { mealSlot, category, portion, notes, foodItemID in
+                units: store.units,
+                onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
                         await store.updateEntry(
                             entry,
                             mealSlotID: mealSlot.id,
                             categoryID: category.id,
                             portion: Portion(portion),
+                            amountValue: amountValue,
+                            amountUnitID: amountUnitID,
                             notes: notes,
                             foodItemID: foodItemID
                         )

@@ -40,6 +40,12 @@ struct ManageView: View {
                 }
 
                 NavigationLink {
+                    UnitsView()
+                } label: {
+                    Label("Units", systemImage: "ruler")
+                }
+
+                NavigationLink {
                     MealSlotsView()
                 } label: {
                     Label("Meal Slots", systemImage: "fork.knife")

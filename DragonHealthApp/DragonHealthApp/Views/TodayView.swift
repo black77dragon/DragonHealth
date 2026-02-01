@@ -114,15 +114,18 @@ struct TodayView: View {
                 categories: store.categories.filter { $0.isEnabled },
                 mealSlots: store.mealSlots,
                 foodItems: store.foodItems,
+                units: store.units,
                 preselectedCategoryID: nil,
                 contextDate: nil,
-                onSave: { mealSlot, category, portion, notes, foodItemID in
+                onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
                         await store.logPortion(
                             date: Date(),
                             mealSlotID: mealSlot.id,
                             categoryID: category.id,
                             portion: Portion(portion),
+                            amountValue: amountValue,
+                            amountUnitID: amountUnitID,
                             notes: notes,
                             foodItemID: foodItemID
                         )
@@ -137,13 +140,16 @@ struct TodayView: View {
                 categories: store.categories,
                 mealSlots: store.mealSlots,
                 foodItems: store.foodItems,
-                onSave: { mealSlot, category, portion, notes, foodItemID in
+                units: store.units,
+                onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
                         await store.updateEntry(
                             entry,
                             mealSlotID: mealSlot.id,
                             categoryID: category.id,
                             portion: Portion(portion),
+                            amountValue: amountValue,
+                            amountUnitID: amountUnitID,
                             notes: notes,
                             foodItemID: foodItemID
                         )
@@ -321,15 +327,18 @@ private struct CategoryDayDetailView: View {
                 categories: store.categories.filter { $0.isEnabled && $0.id == category.id },
                 mealSlots: store.mealSlots,
                 foodItems: store.foodItems,
+                units: store.units,
                 preselectedCategoryID: category.id,
                 contextDate: nil,
-                onSave: { mealSlot, category, portion, notes, foodItemID in
+                onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
                         await store.logPortion(
                             date: Date(),
                             mealSlotID: mealSlot.id,
                             categoryID: category.id,
                             portion: Portion(portion),
+                            amountValue: amountValue,
+                            amountUnitID: amountUnitID,
                             notes: notes,
                             foodItemID: foodItemID
                         )
@@ -344,13 +353,16 @@ private struct CategoryDayDetailView: View {
                 categories: store.categories,
                 mealSlots: store.mealSlots,
                 foodItems: store.foodItems,
-                onSave: { mealSlot, category, portion, notes, foodItemID in
+                units: store.units,
+                onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
                         await store.updateEntry(
                             entry,
                             mealSlotID: mealSlot.id,
                             categoryID: category.id,
                             portion: Portion(portion),
+                            amountValue: amountValue,
+                            amountUnitID: amountUnitID,
                             notes: notes,
                             foodItemID: foodItemID
                         )
@@ -1099,19 +1111,37 @@ private struct TodayDisplaySettingsSheet: View {
     }
 }
 
+private enum EntryInputMode: String, CaseIterable, Identifiable {
+    case portion
+    case amount
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .portion: return "Portions"
+        case .amount: return "Amount"
+        }
+    }
+}
+
 struct QuickAddSheet: View {
     let categories: [Core.Category]
     let mealSlots: [MealSlot]
     let foodItems: [FoodItem]
+    let units: [Core.FoodUnit]
     let preselectedCategoryID: UUID?
     let contextDate: Date?
-    let onSave: (MealSlot, Core.Category, Double, String?, UUID?) -> Void
+    let onSave: (MealSlot, Core.Category, Double, Double?, UUID?, String?, UUID?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedCategoryID: UUID?
     @State private var selectedMealSlotID: UUID?
     @State private var selectedFoodID: UUID?
     @State private var portion: Double = 1.0
+    @State private var inputMode: EntryInputMode = .portion
+    @State private var amountText: String = ""
+    @State private var isSyncing = false
     @State private var notes: String = ""
     private var selectedCategoryColor: Color {
         guard let selectedCategoryID,
@@ -1127,6 +1157,40 @@ struct QuickAddSheet: View {
 
     private func categoryName(for id: UUID) -> String {
         categories.first(where: { $0.id == id })?.name ?? "Unassigned"
+    }
+
+    private var selectedFoodItem: FoodItem? {
+        guard let selectedFoodID else { return nil }
+        return availableFoodItems.first(where: { $0.id == selectedFoodID })
+    }
+
+    private var selectedUnit: Core.FoodUnit? {
+        guard let unitID = selectedFoodItem?.unitID else { return nil }
+        return units.first(where: { $0.id == unitID })
+    }
+
+    private var amountPerPortion: Double? {
+        selectedFoodItem?.amountPerPortion
+    }
+
+    private var amountInputEnabled: Bool {
+        amountPerPortion != nil && selectedUnit != nil
+    }
+
+    private var parsedAmount: Double? {
+        let trimmed = amountText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let normalized = trimmed.replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(normalized), value >= 0 else { return nil }
+        return value
+    }
+
+    private var canSave: Bool {
+        guard selectedMealSlotID != nil, selectedCategoryID != nil else { return false }
+        if inputMode == .amount && amountInputEnabled {
+            return parsedAmount != nil
+        }
+        return true
     }
 
     var body: some View {
@@ -1157,6 +1221,7 @@ struct QuickAddSheet: View {
                             FoodLibraryPicker(
                                 items: availableFoodItems,
                                 categories: categories,
+                                units: units,
                                 selectedCategoryID: selectedCategoryID,
                                 selectedFoodID: $selectedFoodID
                             )
@@ -1166,6 +1231,7 @@ struct QuickAddSheet: View {
                                 FoodItemRow(
                                     item: item,
                                     categoryName: categoryName(for: item.categoryID),
+                                    unitSymbol: selectedUnit?.symbol,
                                     thumbnailSize: 34
                                 )
                             } else {
@@ -1190,8 +1256,42 @@ struct QuickAddSheet: View {
                     }
                 }
 
+                Section("Input Mode") {
+                    Picker("Input Mode", selection: $inputMode) {
+                        ForEach(EntryInputMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(!amountInputEnabled)
+                    if !amountInputEnabled {
+                        Text("Select a food with a portion size to enter amounts.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Portion") {
                     PortionWheelControl(portion: $portion, accentColor: selectedCategoryColor)
+                        .disabled(inputMode == .amount && amountInputEnabled)
+                }
+
+                Section("Amount") {
+                    HStack {
+                        TextField("0", text: $amountText)
+                            .keyboardType(selectedUnit?.allowsDecimal == false ? .numberPad : .decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .disabled(inputMode == .portion || !amountInputEnabled)
+                        if let unitSymbol = selectedUnit?.symbol {
+                            Text(unitSymbol)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let amountPerPortion, let unitSymbol = selectedUnit?.symbol {
+                        Text("1 portion = \(amountPerPortion.cleanNumber) \(unitSymbol)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Notes") {
@@ -1213,21 +1313,36 @@ struct QuickAddSheet: View {
                             return
                         }
                         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-                        onSave(meal, category, portion, trimmedNotes.isEmpty ? nil : trimmedNotes, selectedFoodID)
+                        let storedAmount = inputMode == .amount && amountInputEnabled ? roundedAmount(parsedAmount) : nil
+                        let storedUnitID = storedAmount == nil ? nil : selectedUnit?.id
+                        onSave(
+                            meal,
+                            category,
+                            portion,
+                            storedAmount,
+                            storedUnitID,
+                            trimmedNotes.isEmpty ? nil : trimmedNotes,
+                            selectedFoodID
+                        )
                         dismiss()
                     }
-                    .disabled(selectedMealSlotID == nil || selectedCategoryID == nil)
+                    .disabled(!canSave)
                 }
             }
             .onChange(of: selectedFoodID) { _, newValue in
                 guard let foodID = newValue,
                       let item = availableFoodItems.first(where: { $0.id == foodID }) else {
+                    amountText = ""
                     return
                 }
                 if categories.contains(where: { $0.id == item.categoryID }) {
                     selectedCategoryID = item.categoryID
                 }
-                portion = PortionWheelControl.roundedToQuarter(item.portionEquivalent)
+                portion = PortionWheelControl.roundedToIncrement(item.portionEquivalent)
+                syncAmountFromPortion()
+                if !amountInputEnabled {
+                    inputMode = .portion
+                }
             }
             .onAppear {
                 selectedMealSlotID = selectedMealSlotID ?? mealSlots.first?.id
@@ -1239,15 +1354,71 @@ struct QuickAddSheet: View {
                         selectedCategoryID = categories.first?.id
                     }
                 }
-                portion = PortionWheelControl.roundedToQuarter(portion)
+                portion = PortionWheelControl.roundedToIncrement(portion)
+                syncAmountFromPortion()
+                if !amountInputEnabled {
+                    inputMode = .portion
+                }
+            }
+            .onChange(of: portion) { _, _ in
+                syncAmountFromPortion()
+            }
+            .onChange(of: amountText) { _, _ in
+                guard inputMode == .amount else { return }
+                syncPortionFromAmount()
+            }
+            .onChange(of: inputMode) { _, newValue in
+                if newValue == .amount {
+                    syncAmountFromPortion()
+                }
             }
         }
+    }
+
+    private func roundedAmount(_ value: Double?) -> Double? {
+        guard let value else { return nil }
+        return roundedAmountValue(value)
+    }
+
+    private func roundedAmountValue(_ value: Double) -> Double {
+        if selectedUnit?.allowsDecimal == false {
+            return value.rounded()
+        }
+        return Portion.roundToIncrement(value)
+    }
+
+    private func syncAmountFromPortion() {
+        guard amountInputEnabled else {
+            amountText = ""
+            return
+        }
+        guard !isSyncing else { return }
+        guard let amountPerPortion else { return }
+        isSyncing = true
+        let amount = roundedAmountValue(portion * amountPerPortion)
+        amountText = amount.cleanNumber
+        isSyncing = false
+    }
+
+    private func syncPortionFromAmount() {
+        guard amountInputEnabled else { return }
+        guard !isSyncing else { return }
+        guard let amountPerPortion, let amount = parsedAmount else { return }
+        isSyncing = true
+        let normalizedAmount = roundedAmountValue(amount)
+        let computed = Portion.roundToIncrement(normalizedAmount / amountPerPortion)
+        let clamped = min(max(computed, 0.0), 6.0)
+        portion = clamped
+        let correctedAmount = roundedAmountValue(clamped * amountPerPortion)
+        amountText = correctedAmount.cleanNumber
+        isSyncing = false
     }
 }
 
 private struct FoodLibraryPicker: View {
     let items: [FoodItem]
     let categories: [Core.Category]
+    let units: [Core.FoodUnit]
     let selectedCategoryID: UUID?
     @Binding var selectedFoodID: UUID?
 
@@ -1300,6 +1471,7 @@ private struct FoodLibraryPicker: View {
                                 FoodItemRow(
                                     item: item,
                                     categoryName: categoryName(for: item.categoryID),
+                                    unitSymbol: unitSymbol(for: item.unitID),
                                     showsFavorite: false,
                                     thumbnailSize: 34
                                 )
@@ -1346,6 +1518,11 @@ private struct FoodLibraryPicker: View {
     private func categoryName(for id: UUID) -> String {
         categories.first(where: { $0.id == id })?.name ?? "Unassigned"
     }
+
+    private func unitSymbol(for id: UUID?) -> String? {
+        guard let id else { return nil }
+        return units.first(where: { $0.id == id })?.symbol
+    }
 }
 
 private enum FoodLibraryFilter: String, CaseIterable, Identifiable {
@@ -1384,13 +1561,17 @@ struct EntryEditSheet: View {
     let categories: [Core.Category]
     let mealSlots: [MealSlot]
     let foodItems: [FoodItem]
-    let onSave: (MealSlot, Core.Category, Double, String?, UUID?) -> Void
+    let units: [Core.FoodUnit]
+    let onSave: (MealSlot, Core.Category, Double, Double?, UUID?, String?, UUID?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedCategoryID: UUID?
     @State private var selectedMealSlotID: UUID?
     @State private var selectedFoodID: UUID?
     @State private var portion: Double
+    @State private var inputMode: EntryInputMode
+    @State private var amountText: String
+    @State private var isSyncing = false
     @State private var notes: String
     private var selectedCategoryColor: Color {
         guard let selectedCategoryID,
@@ -1409,17 +1590,49 @@ struct EntryEditSheet: View {
         return foodItems.first(where: { $0.id == foodID })
     }
 
+    private var selectedUnit: Core.FoodUnit? {
+        guard let unitID = selectedFoodItem?.unitID else { return nil }
+        return units.first(where: { $0.id == unitID })
+    }
+
+    private var amountPerPortion: Double? {
+        selectedFoodItem?.amountPerPortion
+    }
+
+    private var amountInputEnabled: Bool {
+        amountPerPortion != nil && selectedUnit != nil
+    }
+
+    private var parsedAmount: Double? {
+        let trimmed = amountText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let normalized = trimmed.replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(normalized), value >= 0 else { return nil }
+        return value
+    }
+
+    private var canSave: Bool {
+        guard selectedMealSlotID != nil, selectedCategoryID != nil else { return false }
+        if inputMode == .amount && amountInputEnabled {
+            return parsedAmount != nil
+        }
+        return true
+    }
+
     private func categoryName(for id: UUID) -> String {
         categories.first(where: { $0.id == id })?.name ?? "Unassigned"
     }
 
-    init(entry: DailyLogEntry, categories: [Core.Category], mealSlots: [MealSlot], foodItems: [FoodItem], onSave: @escaping (MealSlot, Core.Category, Double, String?, UUID?) -> Void) {
+    init(entry: DailyLogEntry, categories: [Core.Category], mealSlots: [MealSlot], foodItems: [FoodItem], units: [Core.FoodUnit], onSave: @escaping (MealSlot, Core.Category, Double, Double?, UUID?, String?, UUID?) -> Void) {
         self.entry = entry
         self.categories = categories
         self.mealSlots = mealSlots
         self.foodItems = foodItems
+        self.units = units
         self.onSave = onSave
-        _portion = State(initialValue: PortionWheelControl.roundedToQuarter(entry.portion.value))
+        _portion = State(initialValue: PortionWheelControl.roundedToIncrement(entry.portion.value))
+        _inputMode = State(initialValue: entry.amountValue == nil ? .portion : .amount)
+        _amountText = State(initialValue: entry.amountValue.map { $0.cleanNumber } ?? "")
         _selectedCategoryID = State(initialValue: entry.categoryID)
         _selectedMealSlotID = State(initialValue: entry.mealSlotID)
         _selectedFoodID = State(initialValue: entry.foodItemID)
@@ -1447,6 +1660,7 @@ struct EntryEditSheet: View {
                             FoodLibraryPicker(
                                 items: availableFoodItems,
                                 categories: categories,
+                                units: units,
                                 selectedCategoryID: selectedCategoryID,
                                 selectedFoodID: $selectedFoodID
                             )
@@ -1455,6 +1669,7 @@ struct EntryEditSheet: View {
                                 FoodItemRow(
                                     item: item,
                                     categoryName: categoryName(for: item.categoryID),
+                                    unitSymbol: selectedUnit?.symbol,
                                     thumbnailSize: 34
                                 )
                             } else {
@@ -1479,8 +1694,42 @@ struct EntryEditSheet: View {
                     }
                 }
 
+                Section("Input Mode") {
+                    Picker("Input Mode", selection: $inputMode) {
+                        ForEach(EntryInputMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(!amountInputEnabled)
+                    if !amountInputEnabled {
+                        Text("Select a food with a portion size to enter amounts.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Portion") {
                     PortionWheelControl(portion: $portion, accentColor: selectedCategoryColor)
+                        .disabled(inputMode == .amount && amountInputEnabled)
+                }
+
+                Section("Amount") {
+                    HStack {
+                        TextField("0", text: $amountText)
+                            .keyboardType(selectedUnit?.allowsDecimal == false ? .numberPad : .decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .disabled(inputMode == .portion || !amountInputEnabled)
+                        if let unitSymbol = selectedUnit?.symbol {
+                            Text(unitSymbol)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let amountPerPortion, let unitSymbol = selectedUnit?.symbol {
+                        Text("1 portion = \(amountPerPortion.cleanNumber) \(unitSymbol)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Notes") {
@@ -1502,30 +1751,107 @@ struct EntryEditSheet: View {
                             return
                         }
                         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-                        onSave(meal, category, portion, trimmedNotes.isEmpty ? nil : trimmedNotes, selectedFoodID)
+                        let storedAmount = inputMode == .amount && amountInputEnabled ? roundedAmount(parsedAmount) : nil
+                        let storedUnitID = storedAmount == nil ? nil : selectedUnit?.id
+                        onSave(
+                            meal,
+                            category,
+                            portion,
+                            storedAmount,
+                            storedUnitID,
+                            trimmedNotes.isEmpty ? nil : trimmedNotes,
+                            selectedFoodID
+                        )
                         dismiss()
                     }
-                    .disabled(selectedMealSlotID == nil || selectedCategoryID == nil)
+                    .disabled(!canSave)
                 }
             }
             .onChange(of: selectedFoodID) { _, newValue in
                 guard let foodID = newValue,
                       let item = availableFoodItems.first(where: { $0.id == foodID }) else {
+                    amountText = ""
                     return
                 }
                 if categories.contains(where: { $0.id == item.categoryID }) {
                     selectedCategoryID = item.categoryID
                 }
-                portion = PortionWheelControl.roundedToQuarter(item.portionEquivalent)
+                portion = PortionWheelControl.roundedToIncrement(item.portionEquivalent)
+                syncAmountFromPortion()
+                if !amountInputEnabled {
+                    inputMode = .portion
+                }
+            }
+            .onChange(of: portion) { _, _ in
+                syncAmountFromPortion()
+            }
+            .onChange(of: amountText) { _, _ in
+                guard inputMode == .amount else { return }
+                syncPortionFromAmount()
+            }
+            .onChange(of: inputMode) { _, newValue in
+                if newValue == .amount {
+                    syncAmountFromPortion()
+                }
+            }
+            .onAppear {
+                if amountInputEnabled && entry.amountValue == nil {
+                    syncAmountFromPortion()
+                }
+                if !amountInputEnabled {
+                    inputMode = .portion
+                }
             }
         }
+    }
+
+    private func roundedAmount(_ value: Double?) -> Double? {
+        guard let value else { return nil }
+        return roundedAmountValue(value)
+    }
+
+    private func roundedAmountValue(_ value: Double) -> Double {
+        if selectedUnit?.allowsDecimal == false {
+            return value.rounded()
+        }
+        return Portion.roundToIncrement(value)
+    }
+
+    private func syncAmountFromPortion() {
+        guard amountInputEnabled else {
+            amountText = ""
+            return
+        }
+        guard !isSyncing else { return }
+        guard let amountPerPortion else { return }
+        isSyncing = true
+        let amount = roundedAmountValue(portion * amountPerPortion)
+        amountText = amount.cleanNumber
+        isSyncing = false
+    }
+
+    private func syncPortionFromAmount() {
+        guard amountInputEnabled else { return }
+        guard !isSyncing else { return }
+        guard let amountPerPortion, let amount = parsedAmount else { return }
+        isSyncing = true
+        let normalizedAmount = roundedAmountValue(amount)
+        let computed = Portion.roundToIncrement(normalizedAmount / amountPerPortion)
+        let clamped = min(max(computed, 0.0), 6.0)
+        portion = clamped
+        let correctedAmount = roundedAmountValue(clamped * amountPerPortion)
+        amountText = correctedAmount.cleanNumber
+        isSyncing = false
     }
 }
 
 private struct PortionWheelControl: View {
     @Binding var portion: Double
     let accentColor: Color
-    private let values: [Double] = stride(from: 0.0, through: 6.0, by: 0.25).map { $0 }
+    private let values: [Double] = {
+        let steps = Int(6.0 / Portion.minimumIncrement)
+        return (0...steps).map { Portion.roundToIncrement(Double($0) * Portion.minimumIncrement) }
+    }()
 
     var body: some View {
         HStack(spacing: 16) {
@@ -1536,7 +1862,7 @@ private struct PortionWheelControl: View {
                     .padding(6)
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel("Decrease by quarter portion")
+            .accessibilityLabel("Decrease by tenth portion")
 
             Picker("Portions", selection: $portion) {
                 ForEach(values, id: \.self) { value in
@@ -1556,22 +1882,22 @@ private struct PortionWheelControl: View {
                     .padding(6)
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel("Increase by quarter portion")
+            .accessibilityLabel("Increase by tenth portion")
         }
     }
 
     private func decrement() {
-        let next = max(0.0, portion - 0.25)
-        portion = Self.roundedToQuarter(next)
+        let next = max(0.0, portion - Portion.minimumIncrement)
+        portion = Self.roundedToIncrement(next)
     }
 
     private func increment() {
-        let next = min(6.0, portion + 0.25)
-        portion = Self.roundedToQuarter(next)
+        let next = min(6.0, portion + Portion.minimumIncrement)
+        portion = Self.roundedToIncrement(next)
     }
 
-    static func roundedToQuarter(_ value: Double) -> Double {
-        Portion.roundToQuarter(value)
+    static func roundedToIncrement(_ value: Double) -> Double {
+        Portion.roundToIncrement(value)
     }
 
     private func valueLabel(_ value: Double) -> String {

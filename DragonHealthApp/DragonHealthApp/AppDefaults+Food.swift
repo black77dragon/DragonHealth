@@ -6,37 +6,90 @@ extension AppDefaults {
         let name: String
         let categoryName: String
         let portion: Double
+        let amountPerPortion: Double?
+        let unitSymbol: String?
         let notes: String
+
+        init(
+            name: String,
+            categoryName: String,
+            portion: Double,
+            amountPerPortion: Double? = nil,
+            unitSymbol: String? = nil,
+            notes: String
+        ) {
+            self.name = name
+            self.categoryName = categoryName
+            self.portion = portion
+            self.amountPerPortion = amountPerPortion
+            self.unitSymbol = unitSymbol
+            self.notes = notes
+        }
     }
 
-    static let foodSeedVersion = 1
+    static let foodSeedVersion = 2
 
-    static func foodItems(categories: [Core.Category]) -> [Core.FoodItem] {
+    static func foodItems(categories: [Core.Category], units: [Core.FoodUnit]) -> [Core.FoodItem] {
         let idsByName = Dictionary(uniqueKeysWithValues: categories.map { ($0.name, $0.id) })
+        let unitsBySymbol = Dictionary(uniqueKeysWithValues: units.map { ($0.symbol.lowercased(), $0.id) })
         return foodSeeds.compactMap { seed -> Core.FoodItem? in
             guard let categoryID = idsByName[seed.categoryName] else { return nil }
+            let unitID = seed.unitSymbol.flatMap { unitsBySymbol[$0.lowercased()] }
             return Core.FoodItem(
                 name: seed.name,
                 categoryID: categoryID,
                 portionEquivalent: seed.portion,
+                amountPerPortion: seed.amountPerPortion,
+                unitID: unitID,
                 notes: seed.notes
             )
         }
     }
 
-    static func missingFoodItems(existing: [Core.FoodItem], categories: [Core.Category]) -> [Core.FoodItem] {
+    static func missingFoodItems(existing: [Core.FoodItem], categories: [Core.Category], units: [Core.FoodUnit]) -> [Core.FoodItem] {
         let idsByName = Dictionary(uniqueKeysWithValues: categories.map { ($0.name, $0.id) })
+        let unitsBySymbol = Dictionary(uniqueKeysWithValues: units.map { ($0.symbol.lowercased(), $0.id) })
         let existingKeys = Set(existing.map { foodKey(name: $0.name, categoryID: $0.categoryID) })
         return foodSeeds.compactMap { seed -> Core.FoodItem? in
             guard let categoryID = idsByName[seed.categoryName] else { return nil }
             let key = foodKey(name: seed.name, categoryID: categoryID)
             guard !existingKeys.contains(key) else { return nil }
+            let unitID = seed.unitSymbol.flatMap { unitsBySymbol[$0.lowercased()] }
             return Core.FoodItem(
                 name: seed.name,
                 categoryID: categoryID,
                 portionEquivalent: seed.portion,
+                amountPerPortion: seed.amountPerPortion,
+                unitID: unitID,
                 notes: seed.notes
             )
+        }
+    }
+
+    static func enrichFoodItems(existing: [Core.FoodItem], categories: [Core.Category], units: [Core.FoodUnit]) -> [Core.FoodItem] {
+        let idsByName = Dictionary(uniqueKeysWithValues: categories.map { ($0.name, $0.id) })
+        let unitsBySymbol = Dictionary(uniqueKeysWithValues: units.map { ($0.symbol.lowercased(), $0.id) })
+        let seedsByKey: [String: FoodSeed] = Dictionary(
+            uniqueKeysWithValues: foodSeeds.compactMap { seed in
+                guard let categoryID = idsByName[seed.categoryName] else { return nil }
+                let key = foodKey(name: seed.name, categoryID: categoryID)
+                return (key, seed)
+            }
+        )
+
+        return existing.compactMap { item in
+            let key = foodKey(name: item.name, categoryID: item.categoryID)
+            guard let seed = seedsByKey[key] else { return nil }
+            var updated = item
+            if updated.amountPerPortion == nil, let seedAmount = seed.amountPerPortion {
+                updated.amountPerPortion = seedAmount
+            }
+            if updated.unitID == nil,
+               let symbol = seed.unitSymbol,
+               let unitID = unitsBySymbol[symbol.lowercased()] {
+                updated.unitID = unitID
+            }
+            return updated == item ? nil : updated
         }
     }
 
@@ -49,50 +102,66 @@ extension AppDefaults {
         FoodSeed(
             name: "Water",
             categoryName: "Unsweetened Drinks",
-            portion: 0.25,
-            notes: "Unsweetened beverage. 1 portion = 250 ml."
+            portion: 0.3,
+            amountPerPortion: 300,
+            unitSymbol: "ml",
+            notes: "Unsweetened beverage. 1 portion = 300 ml."
         ),
         FoodSeed(
             name: "Mineral water (sparkling)",
             categoryName: "Unsweetened Drinks",
-            portion: 0.25,
-            notes: "Unsweetened beverage. 1 portion = 250 ml."
+            portion: 0.3,
+            amountPerPortion: 300,
+            unitSymbol: "ml",
+            notes: "Unsweetened beverage. 1 portion = 300 ml."
         ),
         FoodSeed(
             name: "Herbal tea",
             categoryName: "Unsweetened Drinks",
-            portion: 0.25,
-            notes: "Unsweetened beverage. 1 portion = 250 ml."
+            portion: 0.3,
+            amountPerPortion: 300,
+            unitSymbol: "ml",
+            notes: "Unsweetened beverage. 1 portion = 300 ml."
         ),
         FoodSeed(
             name: "Green tea",
             categoryName: "Unsweetened Drinks",
-            portion: 0.25,
-            notes: "Unsweetened beverage. 1 portion = 250 ml."
+            portion: 0.3,
+            amountPerPortion: 300,
+            unitSymbol: "ml",
+            notes: "Unsweetened beverage. 1 portion = 300 ml."
         ),
         FoodSeed(
             name: "Black coffee",
             categoryName: "Unsweetened Drinks",
-            portion: 0.25,
-            notes: "Unsweetened beverage. 1 portion = 250 ml."
+            portion: 0.3,
+            amountPerPortion: 300,
+            unitSymbol: "ml",
+            notes: "Unsweetened beverage. 1 portion = 300 ml."
         ),
         FoodSeed(
             name: "Rooibos tea",
             categoryName: "Unsweetened Drinks",
-            portion: 0.25,
-            notes: "Unsweetened beverage. 1 portion = 250 ml."
+            portion: 0.3,
+            amountPerPortion: 300,
+            unitSymbol: "ml",
+            notes: "Unsweetened beverage. 1 portion = 300 ml."
         ),
         FoodSeed(
             name: "Unsweetened iced tea",
             categoryName: "Unsweetened Drinks",
-            portion: 0.25,
-            notes: "Unsweetened beverage. 1 portion = 250 ml."
+            portion: 0.3,
+            amountPerPortion: 300,
+            unitSymbol: "ml",
+            notes: "Unsweetened beverage. 1 portion = 300 ml."
         ),
         FoodSeed(
             name: "Vegetable broth (low sodium)",
             categoryName: "Unsweetened Drinks",
-            portion: 0.25,
-            notes: "Light savory drink. 1 portion = 250 ml."
+            portion: 0.3,
+            amountPerPortion: 300,
+            unitSymbol: "ml",
+            notes: "Light savory drink. 1 portion = 300 ml."
         ),
         FoodSeed(
             name: "Broccoli",

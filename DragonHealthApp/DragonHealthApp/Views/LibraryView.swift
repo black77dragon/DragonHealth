@@ -53,12 +53,12 @@ struct LibraryView: View {
             }
         }
         .sheet(isPresented: $showingAdd) {
-            FoodEntrySheet(categories: store.categories) { item in
+            FoodEntrySheet(categories: store.categories, units: store.units) { item in
                 Task { await store.saveFoodItem(item) }
             }
         }
         .sheet(item: $editingItem) { item in
-            FoodEntrySheet(categories: store.categories, item: item) { updatedItem in
+            FoodEntrySheet(categories: store.categories, units: store.units, item: item) { updatedItem in
                 Task { await store.saveFoodItem(updatedItem) }
             }
         }
@@ -66,6 +66,11 @@ struct LibraryView: View {
 
     private func categoryName(for id: UUID) -> String {
         store.categories.first(where: { $0.id == id })?.name ?? "Unassigned"
+    }
+
+    private func unitSymbol(for id: UUID?) -> String? {
+        guard let id else { return nil }
+        return store.units.first(where: { $0.id == id })?.symbol
     }
 
     private var filteredFavorites: [FoodItem] {
@@ -97,7 +102,7 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func foodRow(for item: FoodItem) -> some View {
-        FoodItemRow(item: item, categoryName: categoryName(for: item.categoryID))
+        FoodItemRow(item: item, categoryName: categoryName(for: item.categoryID), unitSymbol: unitSymbol(for: item.unitID))
             .contentShape(Rectangle())
             .onTapGesture {
                 editingItem = item
@@ -116,16 +121,18 @@ struct LibraryView: View {
 struct FoodItemRow: View {
     let item: FoodItem
     let categoryName: String
+    var unitSymbol: String? = nil
     var showsFavorite: Bool = true
     var thumbnailSize: CGFloat = 44
 
     var body: some View {
+        let detailText = detailLine()
         HStack(spacing: 12) {
             FoodThumbnailView(imagePath: item.imagePath, size: thumbnailSize)
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name)
                     .font(.subheadline)
-                Text("\(categoryName) - \(item.portionEquivalent.cleanNumber) portion")
+                Text(detailText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -136,6 +143,15 @@ struct FoodItemRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func detailLine() -> String {
+        var detail = "\(categoryName) - \(item.portionEquivalent.cleanNumber) portion"
+        if let amountPerPortion = item.amountPerPortion,
+           let unitSymbol {
+            detail += " • 1 portion = \(amountPerPortion.cleanNumber) \(unitSymbol)"
+        }
+        return detail
     }
 }
 
@@ -175,6 +191,7 @@ struct FoodThumbnailView: View {
 
 private struct FoodEntrySheet: View {
     let categories: [Core.Category]
+    let units: [Core.FoodUnit]
     let existingItem: FoodItem?
     let onSave: (FoodItem) -> Void
 
@@ -182,6 +199,8 @@ private struct FoodEntrySheet: View {
     @State private var name: String
     @State private var categoryID: UUID?
     @State private var portion: Double
+    @State private var amountText: String
+    @State private var unitID: UUID?
     @State private var notes: String
     @State private var isFavorite: Bool
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -189,13 +208,16 @@ private struct FoodEntrySheet: View {
     @State private var existingImagePath: String?
     @State private var removeExistingImage = false
 
-    init(categories: [Core.Category], item: FoodItem? = nil, onSave: @escaping (FoodItem) -> Void) {
+    init(categories: [Core.Category], units: [Core.FoodUnit], item: FoodItem? = nil, onSave: @escaping (FoodItem) -> Void) {
         self.categories = categories
+        self.units = units
         self.existingItem = item
         self.onSave = onSave
         _name = State(initialValue: item?.name ?? "")
         _categoryID = State(initialValue: item?.categoryID)
         _portion = State(initialValue: item?.portionEquivalent ?? 1.0)
+        _amountText = State(initialValue: item?.amountPerPortion.map { $0.cleanNumber } ?? "")
+        _unitID = State(initialValue: item?.unitID)
         _notes = State(initialValue: item?.notes ?? "")
         _isFavorite = State(initialValue: item?.isFavorite ?? false)
         _existingImagePath = State(initialValue: item?.imagePath)
@@ -233,12 +255,34 @@ private struct FoodEntrySheet: View {
                             Text(category.name).tag(Optional(category.id))
                         }
                     }
-                    Stepper(value: $portion, in: 0.25...6.0, step: 0.25) {
+                    Stepper(value: $portion, in: 0.1...6.0, step: 0.1) {
                         Text("Portion: \(portion.cleanNumber)")
                     }
                     Toggle("Favorite", isOn: $isFavorite)
                     TextField("Notes", text: $notes, axis: .vertical)
                         .lineLimit(3, reservesSpace: true)
+                }
+
+                Section("Portion Size") {
+                    HStack {
+                        Text("Amount per portion")
+                        Spacer()
+                        TextField("0", text: $amountText)
+                            .keyboardType(unitAllowsDecimal ? .decimalPad : .numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(minWidth: 80)
+                    }
+                    Picker("Unit", selection: $unitID) {
+                        Text("None").tag(Optional<UUID>.none)
+                        ForEach(availableUnits) { unit in
+                            Text("\(unit.name) (\(unit.symbol))").tag(Optional(unit.id))
+                        }
+                    }
+                    if let amountValue = parsedAmount, let unitSymbol = unitSymbol(for: unitID) {
+                        Text("1 portion = \(amountValue.cleanNumber) \(unitSymbol)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .navigationTitle(existingItem == nil ? "Add Food" : "Edit Food")
@@ -249,6 +293,8 @@ private struct FoodEntrySheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         guard let categoryID else { return }
+                        let amountValue = parsedAmount
+                        let resolvedUnitID = amountValue == nil ? nil : unitID
                         let itemID = existingItem?.id ?? UUID()
                         var imagePath = removeExistingImage ? nil : existingImagePath
                         if let savedPath = saveImageIfNeeded(itemID: itemID) {
@@ -264,7 +310,9 @@ private struct FoodEntrySheet: View {
                                 id: itemID,
                                 name: name,
                                 categoryID: categoryID,
-                                portionEquivalent: portion,
+                                portionEquivalent: Portion.roundToIncrement(portion),
+                                amountPerPortion: amountValue,
+                                unitID: resolvedUnitID,
                                 notes: notes.isEmpty ? nil : notes,
                                 isFavorite: isFavorite,
                                 imagePath: imagePath
@@ -272,17 +320,50 @@ private struct FoodEntrySheet: View {
                         )
                         dismiss()
                     }
-                    .disabled(name.isEmpty || categoryID == nil)
+                    .disabled(name.isEmpty || categoryID == nil || !isAmountSelectionValid)
                 }
             }
             .onAppear {
                 categoryID = categoryID ?? categories.first?.id
                 loadExistingImageIfNeeded()
+                if parsedAmount == nil {
+                    unitID = nil
+                }
             }
             .task(id: selectedPhotoItem) {
                 await handleSelectedPhoto()
             }
         }
+    }
+
+    private var availableUnits: [Core.FoodUnit] {
+        units.filter { $0.isEnabled || $0.id == unitID }
+    }
+
+    private var parsedAmount: Double? {
+        let trimmed = amountText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let normalized = trimmed.replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(normalized), value > 0 else { return nil }
+        if unitAllowsDecimal {
+            return Portion.roundToIncrement(value)
+        }
+        return value.rounded()
+    }
+
+    private var isAmountSelectionValid: Bool {
+        if parsedAmount == nil { return true }
+        return unitID != nil
+    }
+
+    private var unitAllowsDecimal: Bool {
+        guard let unitID else { return true }
+        return units.first(where: { $0.id == unitID })?.allowsDecimal ?? true
+    }
+
+    private func unitSymbol(for id: UUID?) -> String? {
+        guard let id else { return nil }
+        return units.first(where: { $0.id == id })?.symbol
     }
 
     private func handleSelectedPhoto() async {

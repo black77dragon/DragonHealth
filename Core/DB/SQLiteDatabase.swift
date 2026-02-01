@@ -116,6 +116,58 @@ public actor SQLiteDatabase: DBGateway {
         try step(statement)
     }
 
+    public func fetchUnits() async throws -> [Core.FoodUnit] {
+        let sql = """
+        SELECT id, name, symbol, allows_decimal, is_enabled, sort_order
+        FROM units
+        ORDER BY sort_order ASC, name ASC;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        var units: [Core.FoodUnit] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let id = readUUID(statement, index: 0)
+            let name = readText(statement, index: 1)
+            let symbol = readText(statement, index: 2)
+            let allowsDecimal = readBool(statement, index: 3)
+            let isEnabled = readBool(statement, index: 4)
+            let sortOrder = Int(sqlite3_column_int(statement, 5))
+            units.append(
+                Core.FoodUnit(
+                    id: id,
+                    name: name,
+                    symbol: symbol,
+                    allowsDecimal: allowsDecimal,
+                    isEnabled: isEnabled,
+                    sortOrder: sortOrder
+                )
+            )
+        }
+        return units
+    }
+
+    public func upsertUnit(_ unit: Core.FoodUnit) async throws {
+        let sql = """
+        INSERT INTO units (id, name, symbol, allows_decimal, is_enabled, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            symbol = excluded.symbol,
+            allows_decimal = excluded.allows_decimal,
+            is_enabled = excluded.is_enabled,
+            sort_order = excluded.sort_order;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindUUID(statement, index: 1, value: unit.id)
+        bindText(statement, index: 2, value: unit.name)
+        bindText(statement, index: 3, value: unit.symbol)
+        bindBool(statement, index: 4, value: unit.allowsDecimal)
+        bindBool(statement, index: 5, value: unit.isEnabled)
+        bindInt(statement, index: 6, value: unit.sortOrder)
+        try step(statement)
+    }
+
     public func fetchMealSlots() async throws -> [Core.MealSlot] {
         let sql = """
         SELECT id, name, sort_order
@@ -240,7 +292,7 @@ public actor SQLiteDatabase: DBGateway {
 
     public func fetchFoodItems() async throws -> [Core.FoodItem] {
         let sql = """
-        SELECT id, name, category_id, portion, notes, is_favorite, image_path
+        SELECT id, name, category_id, portion, amount_per_portion, unit_id, notes, is_favorite, image_path
         FROM food_items
         ORDER BY is_favorite DESC, name ASC;
         """
@@ -252,15 +304,19 @@ public actor SQLiteDatabase: DBGateway {
             let name = readText(statement, index: 1)
             let categoryID = readUUID(statement, index: 2)
             let portion = readDouble(statement, index: 3)
-            let notes = readOptionalText(statement, index: 4)
-            let isFavorite = readBool(statement, index: 5)
-            let imagePath = readOptionalText(statement, index: 6)
+            let amountPerPortion = readOptionalDouble(statement, index: 4)
+            let unitID = readOptionalText(statement, index: 5).flatMap(UUID.init(uuidString:))
+            let notes = readOptionalText(statement, index: 6)
+            let isFavorite = readBool(statement, index: 7)
+            let imagePath = readOptionalText(statement, index: 8)
             items.append(
                 Core.FoodItem(
                     id: id,
                     name: name,
                     categoryID: categoryID,
                     portionEquivalent: portion,
+                    amountPerPortion: amountPerPortion,
+                    unitID: unitID,
                     notes: notes,
                     isFavorite: isFavorite,
                     imagePath: imagePath
@@ -272,12 +328,14 @@ public actor SQLiteDatabase: DBGateway {
 
     public func upsertFoodItem(_ item: Core.FoodItem) async throws {
         let sql = """
-        INSERT INTO food_items (id, name, category_id, portion, notes, is_favorite, image_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO food_items (id, name, category_id, portion, amount_per_portion, unit_id, notes, is_favorite, image_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             category_id = excluded.category_id,
             portion = excluded.portion,
+            amount_per_portion = excluded.amount_per_portion,
+            unit_id = excluded.unit_id,
             notes = excluded.notes,
             is_favorite = excluded.is_favorite,
             image_path = excluded.image_path;
@@ -288,9 +346,11 @@ public actor SQLiteDatabase: DBGateway {
         bindText(statement, index: 2, value: item.name)
         bindUUID(statement, index: 3, value: item.categoryID)
         bindDouble(statement, index: 4, value: item.portionEquivalent)
-        bindOptionalText(statement, index: 5, value: item.notes)
-        bindBool(statement, index: 6, value: item.isFavorite)
-        bindOptionalText(statement, index: 7, value: item.imagePath)
+        bindOptionalDouble(statement, index: 5, value: item.amountPerPortion)
+        bindOptionalText(statement, index: 6, value: item.unitID?.uuidString)
+        bindOptionalText(statement, index: 7, value: item.notes)
+        bindBool(statement, index: 8, value: item.isFavorite)
+        bindOptionalText(statement, index: 9, value: item.imagePath)
         try step(statement)
     }
 
@@ -330,8 +390,8 @@ public actor SQLiteDatabase: DBGateway {
             }
 
             let insertSQL = """
-            INSERT INTO daily_entries (id, day, meal_slot_id, category_id, portion, food_item_id, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO daily_entries (id, day, meal_slot_id, category_id, portion, amount_value, amount_unit_id, food_item_id, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
             """
             for entry in uniqueEntries {
                 let statement = try prepare(insertSQL)
@@ -340,8 +400,10 @@ public actor SQLiteDatabase: DBGateway {
                 bindUUID(statement, index: 3, value: entry.mealSlotID)
                 bindUUID(statement, index: 4, value: entry.categoryID)
                 bindDouble(statement, index: 5, value: entry.portion.value)
-                bindOptionalText(statement, index: 6, value: entry.foodItemID?.uuidString)
-                bindOptionalText(statement, index: 7, value: entry.notes)
+                bindOptionalDouble(statement, index: 6, value: entry.amountValue)
+                bindOptionalText(statement, index: 7, value: entry.amountUnitID?.uuidString)
+                bindOptionalText(statement, index: 8, value: entry.foodItemID?.uuidString)
+                bindOptionalText(statement, index: 9, value: entry.notes)
                 try step(statement)
                 sqlite3_finalize(statement)
             }
@@ -355,7 +417,7 @@ public actor SQLiteDatabase: DBGateway {
     public func fetchDailyLog(for date: Date) async throws -> Core.DailyLog? {
         let dayKey = DayBoundary(cutoffMinutes: 0).dayKey(for: date, calendar: calendar)
         let sql = """
-        SELECT id, meal_slot_id, category_id, portion, food_item_id, notes
+        SELECT id, meal_slot_id, category_id, portion, amount_value, amount_unit_id, food_item_id, notes
         FROM daily_entries
         WHERE day = ?
         ORDER BY rowid ASC;
@@ -369,8 +431,10 @@ public actor SQLiteDatabase: DBGateway {
             let mealSlotID = readUUID(statement, index: 1)
             let categoryID = readUUID(statement, index: 2)
             let portion = readDouble(statement, index: 3)
-            let foodItemID = readOptionalText(statement, index: 4).flatMap(UUID.init(uuidString:))
-            let notes = readOptionalText(statement, index: 5)
+            let amountValue = readOptionalDouble(statement, index: 4)
+            let amountUnitID = readOptionalText(statement, index: 5).flatMap(UUID.init(uuidString:))
+            let foodItemID = readOptionalText(statement, index: 6).flatMap(UUID.init(uuidString:))
+            let notes = readOptionalText(statement, index: 7)
             entries.append(
                 Core.DailyLogEntry(
                     id: id,
@@ -378,6 +442,8 @@ public actor SQLiteDatabase: DBGateway {
                     mealSlotID: mealSlotID,
                     categoryID: categoryID,
                     portion: Portion(portion),
+                    amountValue: amountValue,
+                    amountUnitID: amountUnitID,
                     notes: notes,
                     foodItemID: foodItemID
                 )
@@ -594,6 +660,17 @@ public actor SQLiteDatabase: DBGateway {
         """, db: db)
 
         try execute("""
+        CREATE TABLE IF NOT EXISTS units (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            allows_decimal INTEGER NOT NULL,
+            is_enabled INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL
+        );
+        """, db: db)
+
+        try execute("""
         CREATE TABLE IF NOT EXISTS meal_slots (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -608,11 +685,15 @@ public actor SQLiteDatabase: DBGateway {
             meal_slot_id TEXT NOT NULL,
             category_id TEXT NOT NULL,
             portion REAL NOT NULL,
+            amount_value REAL,
+            amount_unit_id TEXT,
             notes TEXT,
             food_item_id TEXT
         );
         """, db: db)
         try? execute("ALTER TABLE daily_entries ADD COLUMN food_item_id TEXT;", db: db)
+        try? execute("ALTER TABLE daily_entries ADD COLUMN amount_value REAL;", db: db)
+        try? execute("ALTER TABLE daily_entries ADD COLUMN amount_unit_id TEXT;", db: db)
         try execute("CREATE INDEX IF NOT EXISTS idx_daily_entries_day ON daily_entries(day);", db: db)
 
         try execute("""
@@ -621,6 +702,8 @@ public actor SQLiteDatabase: DBGateway {
             name TEXT NOT NULL,
             category_id TEXT NOT NULL,
             portion REAL NOT NULL,
+            amount_per_portion REAL,
+            unit_id TEXT,
             notes TEXT,
             is_favorite INTEGER NOT NULL,
             image_path TEXT
@@ -698,12 +781,26 @@ public actor SQLiteDatabase: DBGateway {
         )
 
         try ensureColumns(
+            table: "units",
+            definitions: [
+                "name": "TEXT NOT NULL DEFAULT ''",
+                "symbol": "TEXT NOT NULL DEFAULT ''",
+                "allows_decimal": "INTEGER NOT NULL DEFAULT 1",
+                "is_enabled": "INTEGER NOT NULL DEFAULT 1",
+                "sort_order": "INTEGER NOT NULL DEFAULT 0"
+            ],
+            db: db
+        )
+
+        try ensureColumns(
             table: "daily_entries",
             definitions: [
                 "day": "TEXT NOT NULL DEFAULT ''",
                 "meal_slot_id": "TEXT NOT NULL DEFAULT ''",
                 "category_id": "TEXT NOT NULL DEFAULT ''",
                 "portion": "REAL NOT NULL DEFAULT 0",
+                "amount_value": "REAL",
+                "amount_unit_id": "TEXT",
                 "notes": "TEXT"
             ],
             db: db
@@ -715,6 +812,8 @@ public actor SQLiteDatabase: DBGateway {
                 "name": "TEXT NOT NULL DEFAULT ''",
                 "category_id": "TEXT NOT NULL DEFAULT ''",
                 "portion": "REAL NOT NULL DEFAULT 1",
+                "amount_per_portion": "REAL",
+                "unit_id": "TEXT",
                 "notes": "TEXT",
                 "is_favorite": "INTEGER NOT NULL DEFAULT 0",
                 "image_path": "TEXT"
