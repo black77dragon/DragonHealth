@@ -6,6 +6,7 @@ import InfraLogging
 
 @main
 struct DragonHealthAppApp: App {
+    @UIApplicationDelegateAdaptor(BackupAppDelegate.self) private var appDelegate
     private let logger = AppLogger(category: .appUI)
     private let config = AppConfig.defaultValue
     private let featureFlags = InMemoryFeatureFlagService(flags: [])
@@ -20,4 +21,3 @@ struct DragonHealthAppApp: App {
         }
     }
 }
-

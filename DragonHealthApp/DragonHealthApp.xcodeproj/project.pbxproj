@@ -11,6 +11,7 @@
 		B31124672F2D63A700A36B8B /* InfraConfig in Frameworks */ = {isa = PBXBuildFile; productRef = B31124662F2D63A700A36B8B /* InfraConfig */; };
 		B31124692F2D63A700A36B8B /* InfraFeatureFlags in Frameworks */ = {isa = PBXBuildFile; productRef = B31124682F2D63A700A36B8B /* InfraFeatureFlags */; };
 		B311246B2F2D63A700A36B8B /* InfraLogging in Frameworks */ = {isa = PBXBuildFile; productRef = B311246A2F2D63A700A36B8B /* InfraLogging */; };
+		B311246C2F2D63A700A36B8B /* CoreDB in Frameworks */ = {isa = PBXBuildFile; productRef = B311246D2F2D63A700A36B8B /* CoreDB */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +32,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B31124652F2D63A700A36B8B /* Core in Frameworks */,
+				B311246C2F2D63A700A36B8B /* CoreDB in Frameworks */,
 				B31124672F2D63A700A36B8B /* InfraConfig in Frameworks */,
 				B31124692F2D63A700A36B8B /* InfraFeatureFlags in Frameworks */,
 				B311246B2F2D63A700A36B8B /* InfraLogging in Frameworks */,
@@ -77,6 +79,7 @@
 			name = DragonHealthApp;
 			packageProductDependencies = (
 				B31124642F2D63A700A36B8B /* Core */,
+				B311246D2F2D63A700A36B8B /* CoreDB */,
 				B31124662F2D63A700A36B8B /* InfraConfig */,
 				B31124682F2D63A700A36B8B /* InfraFeatureFlags */,
 				B311246A2F2D63A700A36B8B /* InfraLogging */,
@@ -269,16 +272,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = DragonHealthApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = K64443ANHS;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -301,16 +302,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = DragonHealthApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = K64443ANHS;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -374,6 +373,10 @@
 		B311246A2F2D63A700A36B8B /* InfraLogging */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = InfraLogging;
+		};
+		B311246D2F2D63A700A36B8B /* CoreDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoreDB;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
