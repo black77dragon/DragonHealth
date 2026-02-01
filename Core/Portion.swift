@@ -1,18 +1,18 @@
 import Foundation
 
 public struct Portion: Hashable, Comparable, Sendable {
-    public static let minimumIncrement: Double = 0.25
+    public static let minimumIncrement: Double = 0.1
     public let value: Double
 
     public init(_ value: Double) {
-        self.value = Portion.roundToQuarter(value)
+        self.value = Portion.roundToIncrement(value)
     }
 
     public static func < (lhs: Portion, rhs: Portion) -> Bool {
         lhs.value < rhs.value
     }
 
-    public static func roundToQuarter(_ value: Double) -> Double {
+    public static func roundToIncrement(_ value: Double) -> Double {
         let scaled = (value / minimumIncrement).rounded()
         return scaled * minimumIncrement
     }

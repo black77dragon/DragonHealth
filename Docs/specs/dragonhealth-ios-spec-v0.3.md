@@ -32,6 +32,16 @@ Each category has:
 - target rule
 - sort order
 
+### Units
+
+Each unit has:
+
+- name
+- symbol
+- allows decimal flag
+- enabled flag
+- sort order
+
 ### Meal Slots
 
 Each meal slot has:
@@ -47,6 +57,8 @@ Each entry includes:
 - meal slot
 - category
 - portion value
+- optional amount value (original input)
+- optional amount unit
 - optional notes
 
 ### Body Metrics
@@ -66,6 +78,8 @@ Each food item includes:
 - name
 - category mapping
 - portion equivalent
+- amount per portion (optional)
+- amount unit (optional)
 - optional notes
 - favorite flag
 - optional photo
@@ -137,7 +151,7 @@ Users can add, remove, rename, reorder, or disable categories.
 - At most
 - Range
 
-Exact targets allow +/- 0.25 tolerance.
+Exact targets allow +/- 0.1 tolerance.
 
 ### Default Daily Targets (editable)
 
@@ -153,9 +167,10 @@ Exact targets allow +/- 0.25 tolerance.
 
 ## 6. Portion System
 
-- Core portion values are rounded to 0.25 increments.
-- Quick Add uses 0.25 increments (0.0 to 6.0).
-- Food library portions use 0.25 increments.
+- Core portion values are rounded to 0.1 increments.
+- Quick Add uses 0.1 increments (0.0 to 6.0).
+- Food library portions use 0.1 increments.
+- Amount inputs sync with portion values and round to 0.1.
 
 ## 7. Adherence Logic
 
@@ -176,7 +191,7 @@ Exact targets allow +/- 0.25 tolerance.
 - Per-category day detail screen includes a "+" action to Quick Add a new item for that category on the same day (category is prefilled).
 - Per-meal summaries with scroll-to-meal support.
 - Display settings for category and meal summary styles.
-- Quick Add flow: meal slot + category + portion + optional notes.
+- Quick Add flow: meal slot + category + portion or amount (when available) + optional notes.
 - Food library picker to prefill category and portion.
 - Entry edit and delete flows with notes.
 
@@ -190,7 +205,7 @@ Tue, Jan 31 (Today)
 
 • 0.5 portions  Breakfast    (swipe ← edit | swipe → delete)
 • 1.0 portions  Lunch        (swipe ← edit | swipe → delete)
-• 0.25 portions Snack        (swipe ← edit | swipe → delete)
+• 0.1 portions  Snack        (swipe ← edit | swipe → delete)
 
 -------------------------------------------
 Notes:
@@ -210,6 +225,8 @@ Notes:
 
 - 7-day rolling averages for weight, lean mass, body fat, waist, and steps.
 - Metric history charts (iOS 16+ Charts).
+- Time frame selector for body metric charts: 1 week, 1 month, 3 months, 6 months, all.
+- One selected time frame applies to all body metric charts (single shared setting).
 - List of logged metric entries.
 - Add metrics sheet with date and values.
 - Apple Health sync status and manual sync control.
@@ -217,7 +234,7 @@ Notes:
 ### Library
 
 - List of foods with favorites section.
-- Add/edit food sheets with category, portion equivalent, notes, and favorite flag.
+- Add/edit food sheets with category, portion equivalent, amount per portion + unit (optional), notes, and favorite flag.
 - Optional food photos.
 - Food library items can prefill Quick Add.
 
@@ -237,6 +254,7 @@ Notes:
   - Day cutoff time selector.
   - Categories list with add/edit/delete and target rule editing.
   - Meal slots list with add/edit/delete.
+  - Units list with add/edit/disable.
 - Data and backup:
   - iCloud backup status, last backup metadata, and manual backup trigger (optional note).
   - Restore backup with compatibility checks and confirmation.

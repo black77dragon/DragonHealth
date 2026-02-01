@@ -6,7 +6,7 @@ public enum TargetRule: Hashable, Sendable {
     case atMost(Double)
     case range(min: Double, max: Double)
 
-    public static let exactTolerance: Double = 0.25
+    public static let exactTolerance: Double = 0.1
 
     public func isSatisfied(by total: Double) -> Bool {
         switch self {

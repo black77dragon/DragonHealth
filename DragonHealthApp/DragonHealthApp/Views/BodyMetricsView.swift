@@ -8,21 +8,66 @@ struct BodyMetricsView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var healthSyncManager: HealthSyncManager
     @State private var showingAdd = false
+    @AppStorage("bodyMetrics.timeFrame") private var timeFrameRaw: String = BodyMetricsTimeFrame.month.rawValue
 
     private let calculator = BodyTrendCalculator()
+
+    private var timeFrame: BodyMetricsTimeFrame {
+        BodyMetricsTimeFrame(rawValue: timeFrameRaw) ?? .month
+    }
+
+    private var timeFrameBinding: Binding<BodyMetricsTimeFrame> {
+        Binding(
+            get: { BodyMetricsTimeFrame(rawValue: timeFrameRaw) ?? .month },
+            set: { timeFrameRaw = $0.rawValue }
+        )
+    }
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 let averages = calculator.sevenDayAverages(entries: store.bodyMetrics, referenceDate: store.currentDay)
                 let sortedEntries = store.bodyMetrics.sorted(by: { $0.date < $1.date })
-                let weightPoints = metricPoints(entries: sortedEntries, value: \.weightKg)
-                let leanMassPoints = metricPoints(entries: sortedEntries, value: \.muscleMass)
-                let bodyFatPoints = metricPoints(entries: sortedEntries, value: \.bodyFatPercent)
-                let waistPoints = metricPoints(entries: sortedEntries, value: \.waistCm)
-                let stepsPoints = metricPoints(entries: sortedEntries, value: \.steps)
+                let weightValues = metricValues(entries: sortedEntries, value: \.weightKg)
+                let latestWeight = weightValues.last
+                let previousWeight = weightValues.dropLast().last
+                let lastWeekDate = store.appCalendar.date(byAdding: .day, value: -7, to: store.currentDay) ?? store.currentDay
+                let lastMonthDate = store.appCalendar.date(byAdding: .month, value: -1, to: store.currentDay) ?? store.currentDay
+                let lastWeekWeight = latestMetricValue(
+                    entries: sortedEntries,
+                    value: \.weightKg,
+                    onOrBefore: lastWeekDate
+                )
+                let lastMonthWeight = latestMetricValue(
+                    entries: sortedEntries,
+                    value: \.weightKg,
+                    onOrBefore: lastMonthDate
+                )
+                let latestValues = BodyMetricLatestValues(
+                    weightKg: latestWeight,
+                    muscleMass: latestMetricValue(entries: sortedEntries, value: \.muscleMass),
+                    bodyFatPercent: latestMetricValue(entries: sortedEntries, value: \.bodyFatPercent),
+                    waistCm: latestMetricValue(entries: sortedEntries, value: \.waistCm),
+                    steps: latestMetricValue(entries: sortedEntries, value: \.steps)
+                )
+                let filteredEntries = timeFrame.filteredEntries(
+                    from: sortedEntries,
+                    referenceDate: store.currentDay,
+                    calendar: store.appCalendar
+                )
+                let weightPoints = metricPoints(entries: filteredEntries, value: \.weightKg)
+                let leanMassPoints = metricPoints(entries: filteredEntries, value: \.muscleMass)
+                let bodyFatPoints = metricPoints(entries: filteredEntries, value: \.bodyFatPercent)
+                let waistPoints = metricPoints(entries: filteredEntries, value: \.waistCm)
+                let stepsPoints = metricPoints(entries: filteredEntries, value: \.steps)
 
-                BodyMetricAveragesCard(averages: averages)
+                CurrentWeightCanvas(
+                    latestWeight: latestWeight,
+                    previousWeight: previousWeight,
+                    lastWeekWeight: lastWeekWeight,
+                    lastMonthWeight: lastMonthWeight
+                )
+                BodyMetricAveragesCard(averages: averages, latestValues: latestValues)
                 AppleHealthSyncCard(
                     lastSyncDate: healthSyncManager.lastSyncDate,
                     lastSyncError: healthSyncManager.lastSyncError,
@@ -31,6 +76,7 @@ struct BodyMetricsView: View {
                 )
 
                 BodyMetricHistorySection(
+                    timeFrame: timeFrameBinding,
                     weightPoints: weightPoints,
                     leanMassPoints: leanMassPoints,
                     bodyFatPoints: bodyFatPoints,
@@ -80,24 +126,164 @@ struct BodyMetricsView: View {
             return MetricPoint(date: entry.date, value: metricValue)
         }
     }
+
+    private func metricValues(entries: [BodyMetricEntry], value: KeyPath<BodyMetricEntry, Double?>) -> [Double] {
+        entries.compactMap { $0[keyPath: value] }
+    }
+
+    private func latestMetricValue(entries: [BodyMetricEntry], value: KeyPath<BodyMetricEntry, Double?>) -> Double? {
+        entries.reversed().compactMap { $0[keyPath: value] }.first
+    }
+
+    private func latestMetricValue(
+        entries: [BodyMetricEntry],
+        value: KeyPath<BodyMetricEntry, Double?>,
+        onOrBefore date: Date
+    ) -> Double? {
+        entries.reversed().first { entry in
+            entry.date <= date && entry[keyPath: value] != nil
+        }?[keyPath: value]
+    }
+}
+
+private struct CurrentWeightCanvas: View {
+    let latestWeight: Double?
+    let previousWeight: Double?
+    let lastWeekWeight: Double?
+    let lastMonthWeight: Double?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Current Weight")
+                    .font(.headline)
+                Text(latestWeight.map { "\($0.cleanNumber) kg" } ?? "--")
+                    .font(.system(size: 34, weight: .semibold, design: .rounded))
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 6) {
+                DeltaRow(label: "Last weight", delta: deltaValue(reference: previousWeight))
+                DeltaRow(label: "Last week", delta: deltaValue(reference: lastWeekWeight))
+                DeltaRow(label: "Last month", delta: deltaValue(reference: lastMonthWeight))
+            }
+        }
+        .padding(16)
+        .background(weightCanvasBackground)
+    }
+
+    private func deltaValue(reference: Double?) -> DeltaValue? {
+        guard let latestWeight, let reference else { return nil }
+        let delta = latestWeight - reference
+        if delta < 0 {
+            return DeltaValue(value: delta, color: .green)
+        }
+        if delta > 0 {
+            return DeltaValue(value: delta, color: .red)
+        }
+        return DeltaValue(value: delta, color: .secondary)
+    }
+
+    private var weightCanvasBackground: some View {
+        Canvas { context, size in
+            let rect = CGRect(origin: .zero, size: size)
+            let backgroundPath = RoundedRectangle(cornerRadius: 16, style: .continuous).path(in: rect)
+            context.fill(backgroundPath, with: .color(Color(.secondarySystemBackground)))
+
+            let orbSize = min(size.width, size.height) * 0.65
+            let topOrb = CGRect(
+                x: size.width - orbSize * 0.8,
+                y: -orbSize * 0.3,
+                width: orbSize,
+                height: orbSize
+            )
+            let bottomOrb = CGRect(
+                x: -orbSize * 0.3,
+                y: size.height - orbSize * 0.55,
+                width: orbSize * 0.8,
+                height: orbSize * 0.8
+            )
+            context.fill(Path(ellipseIn: topOrb), with: .color(Color.blue.opacity(0.12)))
+            context.fill(Path(ellipseIn: bottomOrb), with: .color(Color.green.opacity(0.12)))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+private struct DeltaValue {
+    let value: Double
+    let color: Color
+}
+
+private struct DeltaRow: View {
+    let label: String
+    let delta: DeltaValue?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(deltaText)
+                .font(.caption)
+                .foregroundStyle(delta?.color ?? .secondary)
+        }
+    }
+
+    private var deltaText: String {
+        guard let delta else { return "--" }
+        if delta.value > 0 {
+            return "+\(delta.value.cleanNumber)kg"
+        }
+        if delta.value < 0 {
+            return "\(delta.value.cleanNumber)kg"
+        }
+        return "0kg"
+    }
+}
+
+private struct BodyMetricLatestValues {
+    let weightKg: Double?
+    let muscleMass: Double?
+    let bodyFatPercent: Double?
+    let waistCm: Double?
+    let steps: Double?
 }
 
 private struct BodyMetricAveragesCard: View {
     let averages: BodyMetricAverages
+    let latestValues: BodyMetricLatestValues
 
     var body: some View {
+        let weightDisplay = MetricDisplay(average: averages.weightKg, latest: latestValues.weightKg)
+        let leanMassDisplay = MetricDisplay(average: averages.muscleMass, latest: latestValues.muscleMass)
+        let bodyFatDisplay = MetricDisplay(average: averages.bodyFatPercent, latest: latestValues.bodyFatPercent)
+        let waistDisplay = MetricDisplay(average: averages.waistCm, latest: latestValues.waistCm)
+        let stepsDisplay = MetricDisplay(average: averages.steps, latest: latestValues.steps)
+        let fallbackTitles = [
+            weightDisplay.fallbackTitle(label: "Weight"),
+            leanMassDisplay.fallbackTitle(label: "Lean Mass"),
+            bodyFatDisplay.fallbackTitle(label: "Body Fat"),
+            waistDisplay.fallbackTitle(label: "Waist"),
+            stepsDisplay.fallbackTitle(label: "Steps")
+        ].compactMap { $0 }
+
         VStack(alignment: .leading, spacing: 8) {
             Text("7-Day Averages")
                 .font(.headline)
             HStack(spacing: 12) {
-                MetricChip(title: "Weight", value: averages.weightKg, unit: "kg")
-                MetricChip(title: "Lean Mass", value: averages.muscleMass, unit: "kg")
+                MetricChip(title: "Weight", value: weightDisplay.value, unit: "kg", note: weightDisplay.note)
+                MetricChip(title: "Lean Mass", value: leanMassDisplay.value, unit: "kg", note: leanMassDisplay.note)
             }
             HStack(spacing: 12) {
-                MetricChip(title: "Body Fat", value: averages.bodyFatPercent, unit: "%")
-                MetricChip(title: "Waist", value: averages.waistCm, unit: "cm")
+                MetricChip(title: "Body Fat", value: bodyFatDisplay.value, unit: "%", note: bodyFatDisplay.note)
+                MetricChip(title: "Waist", value: waistDisplay.value, unit: "cm", note: waistDisplay.note)
             }
-            MetricChip(title: "Steps", value: averages.steps, unit: "steps")
+            MetricChip(title: "Steps", value: stepsDisplay.value, unit: "steps", note: stepsDisplay.note)
+            if !fallbackTitles.isEmpty {
+                Text("No 7-day average for \(fallbackTitles.joined(separator: ", ")). Showing latest value.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .background(
@@ -161,6 +347,7 @@ private struct AppleHealthSyncCard: View {
 }
 
 private struct BodyMetricHistorySection: View {
+    @Binding var timeFrame: BodyMetricsTimeFrame
     let weightPoints: [MetricPoint]
     let leanMassPoints: [MetricPoint]
     let bodyFatPoints: [MetricPoint]
@@ -171,15 +358,93 @@ private struct BodyMetricHistorySection: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("History")
                 .font(.headline)
-            BodyMetricChartCard(title: "Weight", unit: "kg", points: weightPoints, tint: .blue)
-            BodyMetricChartCard(title: "Lean Mass", unit: "kg", points: leanMassPoints, tint: .teal)
-            BodyMetricChartCard(title: "Body Fat", unit: "%", points: bodyFatPoints, tint: .orange)
-            BodyMetricChartCard(title: "Waist", unit: "cm", points: waistPoints, tint: .red)
-            BodyMetricChartCard(title: "Steps", unit: "steps", points: stepsPoints, tint: .green)
+            TimeFramePicker(timeFrame: $timeFrame)
+            BodyMetricChartCard(title: "Weight", unit: "kg", points: weightPoints, tint: .blue, clampsToZero: true)
+            BodyMetricChartCard(title: "Lean Mass", unit: "kg", points: leanMassPoints, tint: .teal, clampsToZero: true)
+            BodyMetricChartCard(title: "Body Fat", unit: "%", points: bodyFatPoints, tint: .orange, clampsToZero: true)
+            BodyMetricChartCard(title: "Waist", unit: "cm", points: waistPoints, tint: .red, clampsToZero: true)
+            BodyMetricChartCard(title: "Steps", unit: "steps", points: stepsPoints, tint: .green, clampsToZero: true)
         }
     }
 }
 
+private struct TimeFramePicker: View {
+    @Binding var timeFrame: BodyMetricsTimeFrame
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Time Frame")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker("Time Frame", selection: $timeFrame) {
+                ForEach(BodyMetricsTimeFrame.allCases) { frame in
+                    Text(frame.shortLabel)
+                        .accessibilityLabel(frame.fullLabel)
+                        .tag(frame)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+}
+
+private enum BodyMetricsTimeFrame: String, CaseIterable, Identifiable {
+    case week
+    case month
+    case threeMonths
+    case sixMonths
+    case all
+
+    var id: String { rawValue }
+
+    var shortLabel: String {
+        switch self {
+        case .week: return "1W"
+        case .month: return "1M"
+        case .threeMonths: return "3M"
+        case .sixMonths: return "6M"
+        case .all: return "All"
+        }
+    }
+
+    var fullLabel: String {
+        switch self {
+        case .week: return "1 week"
+        case .month: return "1 month"
+        case .threeMonths: return "3 months"
+        case .sixMonths: return "6 months"
+        case .all: return "All time"
+        }
+    }
+
+    func filteredEntries(
+        from entries: [BodyMetricEntry],
+        referenceDate: Date,
+        calendar: Calendar
+    ) -> [BodyMetricEntry] {
+        guard let startDate = startDate(referenceDate: referenceDate, calendar: calendar) else { return entries }
+        return entries.filter { $0.date >= startDate && $0.date <= referenceDate }
+    }
+
+    private var rangeComponent: (Calendar.Component, Int)? {
+        switch self {
+        case .week: return (.day, -6)
+        case .month: return (.month, -1)
+        case .threeMonths: return (.month, -3)
+        case .sixMonths: return (.month, -6)
+        case .all: return nil
+        }
+    }
+
+    private func startDate(referenceDate: Date, calendar: Calendar) -> Date? {
+        guard let rangeComponent else { return nil }
+        return calendar.date(
+            byAdding: rangeComponent.0,
+            value: rangeComponent.1,
+            to: referenceDate
+        )
+    }
+}
 private struct MetricPoint: Identifiable {
     let date: Date
     let value: Double
@@ -192,6 +457,7 @@ private struct BodyMetricChartCard: View {
     let unit: String
     let points: [MetricPoint]
     let tint: Color
+    let clampsToZero: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -211,29 +477,7 @@ private struct BodyMetricChartCard: View {
             } else {
                 #if canImport(Charts)
                 if #available(iOS 16.0, *) {
-                    Chart {
-                        ForEach(points) { point in
-                            LineMark(
-                                x: .value("Date", point.date),
-                                y: .value("Value", point.value)
-                            )
-                            .foregroundStyle(tint)
-                            .interpolationMethod(.catmullRom)
-
-                            PointMark(
-                                x: .value("Date", point.date),
-                                y: .value("Value", point.value)
-                            )
-                            .foregroundStyle(tint)
-                        }
-                    }
-                    .chartXAxis {
-                        AxisMarks(values: .automatic(desiredCount: 4))
-                    }
-                    .chartYAxis {
-                        AxisMarks(position: .leading)
-                    }
-                    .frame(height: 160)
+                    metricChart()
                 } else {
                     Text("Charts require iOS 16 or later.")
                         .font(.caption)
@@ -253,11 +497,69 @@ private struct BodyMetricChartCard: View {
         )
     }
 
+    @ViewBuilder
+    private func metricChart() -> some View {
+        let domain = yDomain(for: points)
+        if let domain {
+            baseChart()
+                .chartYScale(domain: domain)
+        } else {
+            baseChart()
+        }
+    }
+
+    @ViewBuilder
+    private func baseChart() -> some View {
+        Chart {
+            ForEach(points) { point in
+                LineMark(
+                    x: .value("Date", point.date),
+                    y: .value("Value", point.value)
+                )
+                .foregroundStyle(tint)
+                .interpolationMethod(.catmullRom)
+
+                PointMark(
+                    x: .value("Date", point.date),
+                    y: .value("Value", point.value)
+                )
+                .foregroundStyle(tint)
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 4))
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading)
+        }
+        .frame(height: 160)
+    }
+
     private func formattedValue(_ value: Double) -> String {
         if unit == "steps" {
             return "\(Int(value.rounded()))"
         }
         return value.cleanNumber
+    }
+
+    private func yDomain(for points: [MetricPoint]) -> ClosedRange<Double>? {
+        guard let minValue = points.map(\.value).min(),
+              let maxValue = points.map(\.value).max() else {
+            return nil
+        }
+        let lowerPadding = abs(minValue) * 0.1
+        let upperPadding = abs(maxValue) * 0.1
+        var lowerBound = minValue - lowerPadding
+        var upperBound = maxValue + upperPadding
+        if lowerBound == upperBound {
+            let fallbackPadding = max(1, abs(minValue) * 0.1)
+            lowerBound = minValue - fallbackPadding
+            upperBound = maxValue + fallbackPadding
+        }
+        if clampsToZero {
+            lowerBound = max(0, lowerBound)
+        }
+        return lowerBound...upperBound
     }
 }
 
@@ -265,6 +567,7 @@ private struct MetricChip: View {
     let title: String
     let value: Double?
     let unit: String
+    let note: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -273,6 +576,11 @@ private struct MetricChip: View {
                 .foregroundStyle(.secondary)
             Text(value.map { "\($0.cleanNumber) \(unit)" } ?? "--")
                 .font(.subheadline)
+            if let note {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
@@ -280,6 +588,32 @@ private struct MetricChip: View {
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color(.systemBackground))
         )
+    }
+}
+
+private struct MetricDisplay {
+    let value: Double?
+    let note: String?
+    let usesLatest: Bool
+
+    init(average: Double?, latest: Double?) {
+        if let average {
+            self.value = average
+            self.note = nil
+            self.usesLatest = false
+        } else if let latest {
+            self.value = latest
+            self.note = "Latest"
+            self.usesLatest = true
+        } else {
+            self.value = nil
+            self.note = nil
+            self.usesLatest = false
+        }
+    }
+
+    func fallbackTitle(label: String) -> String? {
+        usesLatest ? label : nil
     }
 }
 

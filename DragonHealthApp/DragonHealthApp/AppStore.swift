@@ -13,6 +13,7 @@ final class AppStore: ObservableObject {
 
     @Published private(set) var loadState: LoadState = .loading
     @Published private(set) var categories: [Core.Category] = []
+    @Published private(set) var units: [Core.FoodUnit] = []
     @Published private(set) var mealSlots: [Core.MealSlot] = []
     @Published private(set) var foodItems: [Core.FoodItem] = []
     @Published private(set) var bodyMetrics: [Core.BodyMetricEntry] = []
@@ -92,13 +93,22 @@ final class AppStore: ObservableObject {
                 }
             }
 
+            var loadedUnits = try await db.fetchUnits()
+            if loadedUnits.isEmpty {
+                loadedUnits = AppDefaults.units
+                for unit in loadedUnits {
+                    try await db.upsertUnit(unit)
+                }
+                loadedUnits = try await db.fetchUnits()
+            }
+
             var loadedSettings = try await db.fetchSettings()
             try await db.updateSettings(loadedSettings)
 
             var loadedFoodItems = try await db.fetchFoodItems()
             var didSeedFoodItems = false
             if loadedFoodItems.isEmpty {
-                let defaults = AppDefaults.foodItems(categories: loadedCategories)
+                let defaults = AppDefaults.foodItems(categories: loadedCategories, units: loadedUnits)
                 if !defaults.isEmpty {
                     for item in defaults {
                         try await db.upsertFoodItem(item)
@@ -107,9 +117,16 @@ final class AppStore: ObservableObject {
                     didSeedFoodItems = true
                 }
             } else if loadedSettings.foodSeedVersion < AppDefaults.foodSeedVersion {
-                let missing = AppDefaults.missingFoodItems(existing: loadedFoodItems, categories: loadedCategories)
+                let missing = AppDefaults.missingFoodItems(existing: loadedFoodItems, categories: loadedCategories, units: loadedUnits)
                 if !missing.isEmpty {
                     for item in missing {
+                        try await db.upsertFoodItem(item)
+                    }
+                    loadedFoodItems = try await db.fetchFoodItems()
+                }
+                let enriched = AppDefaults.enrichFoodItems(existing: loadedFoodItems, categories: loadedCategories, units: loadedUnits)
+                if !enriched.isEmpty {
+                    for item in enriched {
                         try await db.upsertFoodItem(item)
                     }
                     loadedFoodItems = try await db.fetchFoodItems()
@@ -125,6 +142,7 @@ final class AppStore: ObservableObject {
             let loadedDocuments = try await db.fetchDocuments()
 
             categories = loadedCategories.sorted(by: { $0.sortOrder < $1.sortOrder })
+            units = loadedUnits.sorted(by: { $0.sortOrder < $1.sortOrder })
             mealSlots = loadedMealSlots.sorted(by: { $0.sortOrder < $1.sortOrder })
             settings = loadedSettings
             foodItems = loadedFoodItems
@@ -169,6 +187,17 @@ final class AppStore: ObservableObject {
             refreshToken = UUID()
         } catch {
             loadState = .failed("Category error: \(error.localizedDescription)")
+        }
+    }
+
+    func saveUnit(_ unit: Core.FoodUnit) async {
+        guard let db else { return }
+        do {
+            try await db.upsertUnit(unit)
+            units = try await db.fetchUnits()
+            refreshToken = UUID()
+        } catch {
+            loadState = .failed("Unit error: \(error.localizedDescription)")
         }
     }
 
@@ -318,6 +347,8 @@ final class AppStore: ObservableObject {
                 mealSlotID: entry.mealSlotID,
                 categoryID: entry.categoryID,
                 portion: entry.portion,
+                amountValue: entry.amountValue,
+                amountUnitID: entry.amountUnitID,
                 notes: entry.notes,
                 foodItemID: entry.foodItemID
             )
@@ -331,6 +362,8 @@ final class AppStore: ObservableObject {
         mealSlotID: UUID,
         categoryID: UUID,
         portion: Core.Portion,
+        amountValue: Double?,
+        amountUnitID: UUID?,
         notes: String?,
         foodItemID: UUID?
     ) async {
@@ -343,6 +376,8 @@ final class AppStore: ObservableObject {
             mealSlotID: mealSlotID,
             categoryID: categoryID,
             portion: portion,
+            amountValue: amountValue,
+            amountUnitID: amountUnitID,
             notes: normalizedNotes(notes),
             foodItemID: foodItemID
         )
@@ -361,6 +396,8 @@ final class AppStore: ObservableObject {
         mealSlotID: UUID,
         categoryID: UUID,
         portion: Core.Portion,
+        amountValue: Double? = nil,
+        amountUnitID: UUID? = nil,
         notes: String?,
         foodItemID: UUID? = nil
     ) async {
@@ -372,6 +409,8 @@ final class AppStore: ObservableObject {
                 mealSlotID: mealSlotID,
                 categoryID: categoryID,
                 portion: portion,
+                amountValue: amountValue,
+                amountUnitID: amountUnitID,
                 notes: normalizedNotes(notes),
                 foodItemID: foodItemID
             )
@@ -406,6 +445,12 @@ final class AppStore: ObservableObject {
 }
 
 enum AppDefaults {
+    static let units: [Core.FoodUnit] = [
+        Core.FoodUnit(name: "Gram", symbol: "g", allowsDecimal: true, isEnabled: true, sortOrder: 0),
+        Core.FoodUnit(name: "Milliliter", symbol: "ml", allowsDecimal: true, isEnabled: true, sortOrder: 1),
+        Core.FoodUnit(name: "Piece", symbol: "pc", allowsDecimal: false, isEnabled: true, sortOrder: 2)
+    ]
+
     static let categories: [Core.Category] = [
         Core.Category(name: "Unsweetened Drinks", unitName: "L", isEnabled: true, targetRule: .range(min: 1.0, max: 2.0), sortOrder: 0),
         Core.Category(name: "Vegetables", unitName: "portions", isEnabled: true, targetRule: .atLeast(3.0), sortOrder: 1),
