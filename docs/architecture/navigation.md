@@ -51,8 +51,8 @@ struct RootTabView: View {
             LibraryStack()
                 .tabItem { Label("Library", systemImage: "list.bullet") }
 
-            SettingsStack()
-                .tabItem { Label("Settings", systemImage: "gear") }
+            ManageStack()
+                .tabItem { Label("Manage", systemImage: "slider.horizontal.3") }
         }
     }
 }
@@ -99,7 +99,11 @@ struct DailySummaryView: View {
     var body: some View {
         VStack {
             ForEach(categories) { category in
-                CategoryProgressRow(category: category)
+                NavigationLink {
+                    CategoryDayDetailView(category: category, day: .today)
+                } label: {
+                    CategoryProgressRow(category: category)
+                }
             }
         }
     }
@@ -144,6 +148,57 @@ struct MealDetailView: View {
     }
 }
 ```
+
+### CategoryDayDetailView (Per-Category Entries for Day)
+
+```swift
+struct CategoryDayDetailView: View {
+    let category: Category
+    let day: DayLog
+    @State private var quickAddPresented = false
+    @State private var editingEntry: DayEntry?
+
+    var body: some View {
+        List {
+            ForEach(day.entries(for: category)) { entry in
+                DayEntryRow(entry: entry)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            // delete entry
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                        Button {
+                            editingEntry = entry
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .tint(.blue)
+                    }
+            }
+        }
+        .navigationTitle(category.name)
+        .toolbar {
+            Button {
+                quickAddPresented = true
+            } label: {
+                Image(systemName: "plus")
+            }
+        }
+        .sheet(item: $editingEntry) { entry in
+            // edit sheet with entry prefilled
+        }
+        .sheet(isPresented: $quickAddPresented) {
+            // Quick Add with day + category prefilled
+        }
+    }
+}
+```
+
+Notes:
+- DayEntryRow uses leading/trailing swipe actions for edit and delete.
 
 ## History Tab
 
@@ -285,43 +340,78 @@ struct FoodDetailView: View {
 }
 ```
 
-## Settings Tab
+## Manage Tab
 
-### SettingsStack
+### ManageStack
 
 ```swift
-struct SettingsStack: View {
+struct ManageStack: View {
     var body: some View {
         NavigationStack {
-            SettingsView()
+            ManageView()
         }
     }
 }
 ```
 
-### SettingsView
+### ManageView
 
 ```swift
-struct SettingsView: View {
+struct ManageView: View {
     var body: some View {
         Form {
-            NavigationLink("Plan Targets") {
-                PlanSettingsView()
+            Section("Profile & Care Team") {
+                NavigationLink("Profile Details") {
+                    ProfileDetailsView()
+                }
+                NavigationLink("Care Team") {
+                    CareTeamSettingsView()
+                }
+                NavigationLink("Meeting Log") {
+                    CareTeamLogView()
+                }
             }
-            NavigationLink("Categories") {
-                CategorySettingsView()
+
+            Section("Plan & Meals") {
+                NavigationLink("Day Boundary") {
+                    DayBoundarySettingsView()
+                }
+                NavigationLink("Categories") {
+                    CategoriesView()
+                }
+                NavigationLink("Meal Slots") {
+                    MealSlotsView()
+                }
             }
-            NavigationLink("Meals") {
-                MealSettingsView()
+
+            Section("Data & Backup") {
+                NavigationLink("iCloud Backup") {
+                    BackupSettingsView()
+                }
+                NavigationLink("Restore Backup") {
+                    RestoreBackupView()
+                }
             }
-            NavigationLink("Day Rules") {
-                DayRuleSettingsView()
+
+            Section("Integrations") {
+                NavigationLink("Apple Health") {
+                    HealthSyncSettingsView()
+                }
             }
-            NavigationLink("Data and Export") {
-                DataSettingsView()
+
+            Section("Documents") {
+                NavigationLink("Document Library") {
+                    DocumentsView()
+                }
+            }
+
+            Section("About") {
+                NavigationLink("Privacy & Version") {
+                    AboutView()
+                }
             }
         }
-        .navigationTitle("Settings")
+        .navigationTitle("Manage")
     }
 }
 ```
@@ -336,10 +426,11 @@ stateDiagram-v2
     RootTabView --> HistoryStack
     RootTabView --> BodyStack
     RootTabView --> LibraryStack
-    RootTabView --> SettingsStack
+    RootTabView --> ManageStack
 
     TodayStack --> TodayView
     TodayView --> MealDetailView
+    TodayView --> CategoryDayDetailView
     MealDetailView --> FoodPickerView
 
     HistoryStack --> HistoryView
@@ -350,12 +441,18 @@ stateDiagram-v2
     LibraryStack --> LibraryView
     LibraryView --> FoodDetailView
 
-    SettingsStack --> SettingsView
-    SettingsView --> PlanSettingsView
-    SettingsView --> CategorySettingsView
-    SettingsView --> MealSettingsView
-    SettingsView --> DayRuleSettingsView
-    SettingsView --> DataSettingsView
+    ManageStack --> ManageView
+    ManageView --> ProfileDetailsView
+    ManageView --> CareTeamSettingsView
+    ManageView --> CareTeamLogView
+    ManageView --> DayBoundarySettingsView
+    ManageView --> CategoriesView
+    ManageView --> MealSlotsView
+    ManageView --> BackupSettingsView
+    ManageView --> RestoreBackupView
+    ManageView --> HealthSyncSettingsView
+    ManageView --> DocumentsView
+    ManageView --> AboutView
 ```
 
 ## Architectural Notes (Important)

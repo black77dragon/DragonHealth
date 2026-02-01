@@ -7,6 +7,8 @@ public enum LogCategory: String {
     case dbSQL = "db.sql"
     case infraConfig = "infra.config"
     case security = "sec"
+    case backup = "backup"
+    case health = "health"
 }
 
 public struct AppLogger: Sendable {

@@ -7,7 +7,6 @@ let package = Package(
         .iOS(.v17)
     ],
     products: [
-        .executable(name: "DragonHealthApp", targets: ["DragonHealthApp"]),
         .library(name: "Core", targets: ["Core"]),
         .library(name: "CoreDB", targets: ["CoreDB"]),
         .library(name: "InfraLogging", targets: ["InfraLogging"]),
@@ -15,16 +14,6 @@ let package = Package(
         .library(name: "InfraFeatureFlags", targets: ["InfraFeatureFlags"])
     ],
     targets: [
-        .executableTarget(
-            name: "DragonHealthApp",
-            dependencies: [
-                "Core",
-                "InfraLogging",
-                "InfraConfig",
-                "InfraFeatureFlags"
-            ],
-            path: "App"
-        ),
         .target(
             name: "Core",
             path: "Core",
