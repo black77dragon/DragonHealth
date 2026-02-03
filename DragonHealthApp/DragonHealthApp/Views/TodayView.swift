@@ -9,19 +9,29 @@ struct TodayView: View {
     @State private var dailyLog: DailyLog?
     @State private var totals: [UUID: Double] = [:]
     @State private var adherence: DailyAdherenceSummary?
+    @State private var scoreSummary: DailyScoreSummary?
     @State private var showingQuickAdd = false
+    @State private var showingVoiceLog = false
     @State private var editingEntry: DailyLogEntry?
+    @State private var viewingEntry: DailyLogEntry?
     @State private var showingDisplaySettings = false
+    @State private var saveConfirmationMessage: String?
+    @State private var saveConfirmationTask: Task<Void, Never>?
     @AppStorage("today.categoryDisplayStyle") private var categoryDisplayStyleRaw: String = CategoryDisplayStyle.compactRings.rawValue
     @AppStorage("today.mealDisplayStyle") private var mealDisplayStyleRaw: String = MealDisplayStyle.miniCards.rawValue
+    @AppStorage("today.quickAddStyle") private var quickAddStyleRaw: String = QuickAddStyle.standard.rawValue
 
     private let totalsCalculator = DailyTotalsCalculator()
     private let evaluator = DailyTotalEvaluator()
+    private let scoreEvaluator = DailyScoreEvaluator()
     private var categoryDisplayStyle: CategoryDisplayStyle {
         CategoryDisplayStyle(rawValue: categoryDisplayStyleRaw) ?? .compactRings
     }
     private var mealDisplayStyle: MealDisplayStyle {
         MealDisplayStyle(rawValue: mealDisplayStyleRaw) ?? .miniCards
+    }
+    private var quickAddStyle: QuickAddStyle {
+        QuickAddStyle(rawValue: quickAddStyleRaw) ?? .standard
     }
     private var categoryDisplayBinding: Binding<CategoryDisplayStyle> {
         Binding(
@@ -35,60 +45,66 @@ struct TodayView: View {
             set: { mealDisplayStyleRaw = $0.rawValue }
         )
     }
+    private var quickAddStyleBinding: Binding<QuickAddStyle> {
+        Binding(
+            get: { quickAddStyle },
+            set: { quickAddStyleRaw = $0.rawValue }
+        )
+    }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    TodayHeaderView(date: store.currentDay, adherence: adherence)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                TodayHeaderView(adherence: adherence, scoreSummary: scoreSummary)
 
-                    let visibleCategories = store.categories.filter { $0.isEnabled }
-                    if visibleCategories.isEmpty {
-                        Text("No categories configured yet.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        CategoryOverviewGrid(
-                            categories: visibleCategories,
-                            totals: totals,
-                            style: categoryDisplayStyle
-                        ) { category in
-                            CategoryDayDetailView(category: category)
+                let visibleCategories = store.categories.filter { $0.isEnabled }
+                if visibleCategories.isEmpty {
+                    Text("No categories configured yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    CategoryOverviewGrid(
+                        categories: visibleCategories,
+                        totals: totals,
+                        style: categoryDisplayStyle
+                    ) { category in
+                        CategoryDayDetailView(category: category)
+                    }
+                }
+
+                let mealEntries = dailyLog?.entries ?? []
+                TodayMealBreakdownView(
+                    mealSlots: store.mealSlots,
+                    entries: mealEntries,
+                    categories: store.categories,
+                    style: mealDisplayStyle
+                )
+
+                TodayMealDetailsSection(
+                    mealSlots: store.mealSlots,
+                    entries: mealEntries,
+                    categories: store.categories,
+                    foodItems: store.foodItems,
+                    onViewDetails: { entry in
+                        viewingEntry = entry
+                    },
+                    onEdit: { entry in
+                        editingEntry = entry
+                    },
+                    onDelete: { entry in
+                        Task {
+                            await store.deleteEntry(entry)
+                            await loadToday()
                         }
                     }
-
-                    let mealEntries = dailyLog?.entries ?? []
-                    TodayMealBreakdownView(
-                        mealSlots: store.mealSlots,
-                        entries: mealEntries,
-                        categories: store.categories,
-                        style: mealDisplayStyle,
-                        onSelectMeal: { mealSlot in
-                            withAnimation(.easeInOut) {
-                                proxy.scrollTo(mealSlot.id, anchor: .top)
-                            }
-                        }
-                    )
-
-                    TodayMealDetailsSection(
-                        mealSlots: store.mealSlots,
-                        entries: mealEntries,
-                        categories: store.categories,
-                        onEdit: { entry in
-                            editingEntry = entry
-                        },
-                        onDelete: { entry in
-                            Task {
-                                await store.deleteEntry(entry)
-                                await loadToday()
-                            }
-                        }
-                    )
-                }
-                .padding(20)
+                )
             }
+            .padding(20)
         }
-        .navigationTitle("Today")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                TodayNavTitleView(date: store.currentDay)
+            }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
                     showingDisplaySettings = true
@@ -101,12 +117,18 @@ struct TodayView: View {
                 } label: {
                     Label("Quick Add", systemImage: "plus")
                 }
+                Button {
+                    showingVoiceLog = true
+                } label: {
+                    Label("Voice Log", systemImage: "mic")
+                }
             }
         }
         .sheet(isPresented: $showingDisplaySettings) {
             TodayDisplaySettingsSheet(
                 categorySelection: categoryDisplayBinding,
-                mealSelection: mealDisplayBinding
+                mealSelection: mealDisplayBinding,
+                quickAddStyle: quickAddStyleBinding
             )
         }
         .sheet(isPresented: $showingQuickAdd) {
@@ -116,7 +138,9 @@ struct TodayView: View {
                 foodItems: store.foodItems,
                 units: store.units,
                 preselectedCategoryID: nil,
+                preselectedMealSlotID: nil,
                 contextDate: nil,
+                style: quickAddStyle,
                 onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
                         await store.logPortion(
@@ -130,6 +154,40 @@ struct TodayView: View {
                             foodItemID: foodItemID
                         )
                         await loadToday()
+                    }
+                }
+            )
+        }
+        .sheet(isPresented: $showingVoiceLog) {
+            VoiceLogSheet(
+                categories: store.categories.filter { $0.isEnabled },
+                mealSlots: store.mealSlots,
+                foodItems: store.foodItems,
+                units: store.units,
+                onSave: { mealSlot, items, _ in
+                    Task {
+                        var savedCount = 0
+                        for item in items {
+                            guard let categoryID = item.categoryID,
+                                  let portion = item.portion else { continue }
+                            let trimmedNotes = item.notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                            let notes = trimmedNotes.isEmpty && item.matchedFoodID == nil ? item.foodText : trimmedNotes
+                            await store.logPortion(
+                                date: Date(),
+                                mealSlotID: mealSlot.id,
+                                categoryID: categoryID,
+                                portion: Portion(portion),
+                                amountValue: item.amountValue,
+                                amountUnitID: item.amountUnitID,
+                                notes: notes.isEmpty ? nil : notes,
+                                foodItemID: item.matchedFoodID
+                            )
+                            savedCount += 1
+                        }
+                        await loadToday()
+                        if savedCount > 0 {
+                            showSaveConfirmation("data is successfully stored")
+                        }
                     }
                 }
             )
@@ -158,8 +216,28 @@ struct TodayView: View {
                 }
             )
         }
+        .sheet(item: $viewingEntry) { entry in
+            EntryDetailSheet(
+                entry: entry,
+                categories: store.categories,
+                mealSlots: store.mealSlots,
+                foodItems: store.foodItems,
+                units: store.units
+            )
+        }
         .task(id: store.refreshToken) {
             await loadToday()
+        }
+        .overlay(alignment: .top) {
+            if let message = saveConfirmationMessage {
+                Text(message)
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.thinMaterial, in: Capsule())
+                    .padding(.top, 12)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
     }
 
@@ -169,25 +247,89 @@ struct TodayView: View {
         let entries = log?.entries ?? []
         totals = totalsCalculator.totalsByCategory(entries: entries)
         adherence = evaluator.evaluate(categories: store.categories, totalsByCategoryID: totals)
+        scoreSummary = scoreEvaluator.evaluate(
+            categories: store.categories,
+            totalsByCategoryID: totals,
+            profilesByCategoryID: store.scoreProfiles,
+            compensationRules: store.compensationRules
+        )
+    }
+
+    @MainActor
+    private func showSaveConfirmation(_ message: String) {
+        saveConfirmationMessage = message
+        saveConfirmationTask?.cancel()
+        saveConfirmationTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            withAnimation {
+                saveConfirmationMessage = nil
+            }
+        }
+    }
+}
+
+private enum TodayDateFormatter {
+    static let weekdayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "EEE"
+        return formatter
+    }()
+    static let restFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "d MMM yy"
+        return formatter
+    }()
+
+    static func string(from date: Date) -> String {
+        let weekday = weekdayFormatter.string(from: date).uppercased()
+        let rest = restFormatter.string(from: date)
+        return "\(weekday) - \(rest)"
+    }
+}
+
+private struct TodayNavTitleView: View {
+    let date: Date
+
+    var body: some View {
+        HStack {
+            Text("Today")
+                .font(.headline)
+            Spacer(minLength: 12)
+            Text(TodayDateFormatter.string(from: date))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Today, \(TodayDateFormatter.string(from: date))")
     }
 }
 
 private struct TodayHeaderView: View {
-    let date: Date
     let adherence: DailyAdherenceSummary?
+    let scoreSummary: DailyScoreSummary?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(date, style: .date)
-                .font(.headline)
+            if let scoreSummary {
+                ScoreBadge(score: scoreSummary.overallScore)
+            }
             if let adherence {
                 let metCount = adherence.categoryResults.filter { $0.targetMet }.count
-                Text("\(metCount) of \(adherence.categoryResults.count) on track")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(adherence.allTargetsMet ? "All targets met" : "Targets in progress")
-                    .font(.subheadline)
-                    .foregroundStyle(adherence.allTargetsMet ? .green : .secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text("\(metCount) of \(adherence.categoryResults.count) on track")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(adherence.allTargetsMet ? "All targets met" : "Targets in progress")
+                        .font(.subheadline)
+                        .foregroundStyle(adherence.allTargetsMet ? .green : .secondary)
+                }
             } else {
                 Text("No data yet")
                     .font(.subheadline)
@@ -269,6 +411,11 @@ private struct CategoryDayDetailView: View {
     @State private var dailyLog: DailyLog?
     @State private var showingQuickAdd = false
     @State private var editingEntry: DailyLogEntry?
+    @AppStorage("today.quickAddStyle") private var quickAddStyleRaw: String = QuickAddStyle.standard.rawValue
+
+    private var quickAddStyle: QuickAddStyle {
+        QuickAddStyle(rawValue: quickAddStyleRaw) ?? .standard
+    }
 
     private var entries: [DailyLogEntry] {
         dailyLog?.entries.filter { $0.categoryID == category.id } ?? []
@@ -329,7 +476,9 @@ private struct CategoryDayDetailView: View {
                 foodItems: store.foodItems,
                 units: store.units,
                 preselectedCategoryID: category.id,
+                preselectedMealSlotID: nil,
                 contextDate: nil,
+                style: quickAddStyle,
                 onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
                         await store.logPortion(
@@ -428,6 +577,227 @@ private struct CategoryDayEntryRow: View {
     }
 }
 
+private struct MealDayDetailView: View {
+    @EnvironmentObject private var store: AppStore
+    let mealSlot: MealSlot
+    @State private var dailyLog: DailyLog?
+    @State private var showingQuickAdd = false
+    @State private var editingEntry: DailyLogEntry?
+    @State private var viewingEntry: DailyLogEntry?
+    @AppStorage("today.quickAddStyle") private var quickAddStyleRaw: String = QuickAddStyle.standard.rawValue
+
+    private var quickAddStyle: QuickAddStyle {
+        QuickAddStyle(rawValue: quickAddStyleRaw) ?? .standard
+    }
+
+    private var entries: [DailyLogEntry] {
+        dailyLog?.entries.filter { $0.mealSlotID == mealSlot.id } ?? []
+    }
+
+    private var sortedEntries: [DailyLogEntry] {
+        let order = Dictionary(uniqueKeysWithValues: store.categories.map { ($0.id, $0.sortOrder) })
+        return entries.sorted {
+            let left = order[$0.categoryID] ?? 0
+            let right = order[$1.categoryID] ?? 0
+            if left != right { return left < right }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                if sortedEntries.isEmpty {
+                    Text("No items yet.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 12)
+                } else {
+                    ForEach(sortedEntries) { entry in
+                        MealDayEntryRow(
+                            entry: entry,
+                            categories: store.categories,
+                            foodItems: store.foodItems,
+                            units: store.units
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { viewingEntry = entry }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button("Delete", role: .destructive) {
+                                Task {
+                                    await store.deleteEntry(entry)
+                                    await loadEntries()
+                                }
+                            }
+                        }
+                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                            Button("Edit") {
+                                editingEntry = entry
+                            }
+                            .tint(.blue)
+                        }
+                        .contextMenu {
+                            Button("Edit") { editingEntry = entry }
+                            Button("Delete", role: .destructive) {
+                                Task {
+                                    await store.deleteEntry(entry)
+                                    await loadEntries()
+                                }
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text(store.currentDay, style: .date)
+            }
+        }
+        .navigationTitle(mealSlot.name)
+        .toolbar {
+            Button {
+                showingQuickAdd = true
+            } label: {
+                Image(systemName: "plus")
+            }
+            .accessibilityLabel("Add entry")
+        }
+        .sheet(isPresented: $showingQuickAdd) {
+            QuickAddSheet(
+                categories: store.categories.filter { $0.isEnabled },
+                mealSlots: store.mealSlots,
+                foodItems: store.foodItems,
+                units: store.units,
+                preselectedCategoryID: nil,
+                preselectedMealSlotID: mealSlot.id,
+                contextDate: nil,
+                style: quickAddStyle,
+                onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
+                    Task {
+                        await store.logPortion(
+                            date: Date(),
+                            mealSlotID: mealSlot.id,
+                            categoryID: category.id,
+                            portion: Portion(portion),
+                            amountValue: amountValue,
+                            amountUnitID: amountUnitID,
+                            notes: notes,
+                            foodItemID: foodItemID
+                        )
+                        await loadEntries()
+                    }
+                }
+            )
+        }
+        .sheet(item: $editingEntry) { entry in
+            EntryEditSheet(
+                entry: entry,
+                categories: store.categories,
+                mealSlots: store.mealSlots,
+                foodItems: store.foodItems,
+                units: store.units,
+                onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
+                    Task {
+                        await store.updateEntry(
+                            entry,
+                            mealSlotID: mealSlot.id,
+                            categoryID: category.id,
+                            portion: Portion(portion),
+                            amountValue: amountValue,
+                            amountUnitID: amountUnitID,
+                            notes: notes,
+                            foodItemID: foodItemID
+                        )
+                        await loadEntries()
+                    }
+                }
+            )
+        }
+        .sheet(item: $viewingEntry) { entry in
+            EntryDetailSheet(
+                entry: entry,
+                categories: store.categories,
+                mealSlots: store.mealSlots,
+                foodItems: store.foodItems,
+                units: store.units
+            )
+        }
+        .task(id: store.refreshToken) { await loadEntries() }
+    }
+
+    private func loadEntries() async {
+        dailyLog = await store.fetchDailyLog(for: Date())
+    }
+}
+
+private struct MealDayEntryRow: View {
+    let entry: DailyLogEntry
+    let categories: [Core.Category]
+    let foodItems: [FoodItem]
+    let units: [Core.FoodUnit]
+
+    private var category: Core.Category? {
+        categories.first(where: { $0.id == entry.categoryID })
+    }
+
+    private var foodItem: FoodItem? {
+        guard let foodID = entry.foodItemID else { return nil }
+        return foodItems.first(where: { $0.id == foodID })
+    }
+
+    private var amountUnitSymbol: String? {
+        guard let unitID = entry.amountUnitID else { return nil }
+        return units.first(where: { $0.id == unitID })?.symbol
+    }
+
+    private var notesText: String? {
+        let trimmed = entry.notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var portionText: String {
+        let unitName = category?.unitName ?? ""
+        return unitName.isEmpty ? entry.portion.value.cleanNumber : "\(entry.portion.value.cleanNumber) \(unitName)"
+    }
+
+    private var categoryColor: Color {
+        guard let category else { return CategoryColorPalette.fallback }
+        return CategoryColorPalette.color(for: category)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Circle()
+                    .fill(categoryColor)
+                    .frame(width: 10, height: 10)
+                Text(category?.name ?? "Category")
+                    .font(.subheadline)
+                Spacer()
+                Text(portionText)
+                    .font(.subheadline)
+            }
+            if let foodItem {
+                Text("Food: \(foodItem.name)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let amountValue = entry.amountValue {
+                let unit = amountUnitSymbol ?? ""
+                let amountText = unit.isEmpty ? amountValue.cleanNumber : "\(amountValue.cleanNumber) \(unit)"
+                Text("Amount: \(amountText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let notesText {
+                Text("Notes: \(notesText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 private struct CategoryRingTile: View {
     let category: Core.Category
     let total: Double
@@ -437,7 +807,9 @@ private struct CategoryRingTile: View {
 
     var body: some View {
         let progress = CategoryProgress.make(category: category, total: total, targetMet: targetMet)
-        let targetSummary = categoryTargetSummary(total: total, rule: category.targetRule)
+        let missing = missingAmount(rule: category.targetRule, total: total)
+        let missingText = "\(missing.cleanNumber) \(category.unitName)"
+        let showMissing = !targetMet && missing > 0
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
                 ProgressRing(
@@ -454,9 +826,9 @@ private struct CategoryRingTile: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
-            Text(targetSummary)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            if showMissing {
+                MissingTargetValue(text: missingText, style: .stacked)
+            }
         }
         .padding(10)
         .background(
@@ -467,10 +839,13 @@ private struct CategoryRingTile: View {
             Text(category.name)
             Text("Target: \(category.targetRule.displayText(unit: category.unitName))")
             Text("Total: \(total.cleanNumber) \(category.unitName)")
+            if showMissing {
+                Text("Missing: \(missingText)")
+            }
             Text(progress.status.label)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(category.name), \(progress.status.label), \(total.cleanNumber) \(category.unitName)")
+        .accessibilityLabel(showMissing ? "\(category.name), \(progress.status.label), missing \(missingText)" : "\(category.name), \(progress.status.label)")
     }
 }
 
@@ -483,16 +858,18 @@ private struct CategoryInlineTile: View {
 
     var body: some View {
         let progress = CategoryProgress.make(category: category, total: total, targetMet: targetMet)
-        let targetSummary = categoryTargetSummary(total: total, rule: category.targetRule)
+        let missing = missingAmount(rule: category.targetRule, total: total)
+        let missingText = "\(missing.cleanNumber) \(category.unitName)"
+        let showMissing = !targetMet && missing > 0
         HStack(spacing: 10) {
             ProgressRing(progress: progress.ringProgress, accent: accentColor, iconName: iconName, size: 34)
             VStack(alignment: .leading, spacing: 2) {
                 Text(category.name)
                     .font(.caption)
                     .lineLimit(1)
-                Text(targetSummary)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if showMissing {
+                    MissingTargetValue(text: missingText, style: .inline)
+                }
             }
             Spacer()
             StatusBadge(status: progress.status)
@@ -506,10 +883,13 @@ private struct CategoryInlineTile: View {
             Text(category.name)
             Text("Target: \(category.targetRule.displayText(unit: category.unitName))")
             Text("Total: \(total.cleanNumber) \(category.unitName)")
+            if showMissing {
+                Text("Missing: \(missingText)")
+            }
             Text(progress.status.label)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(category.name), \(progress.status.label), \(total.cleanNumber) \(category.unitName)")
+        .accessibilityLabel(showMissing ? "\(category.name), \(progress.status.label), missing \(missingText)" : "\(category.name), \(progress.status.label)")
     }
 }
 
@@ -522,18 +902,22 @@ private struct CategoryCapsuleTile: View {
 
     var body: some View {
         let progress = CategoryProgress.make(category: category, total: total, targetMet: targetMet)
-        let targetSummary = categoryTargetSummary(total: total, rule: category.targetRule)
+        let missing = missingAmount(rule: category.targetRule, total: total)
+        let missingText = "\(missing.cleanNumber) \(category.unitName)"
+        let showMissing = !targetMet && missing > 0
         HStack(spacing: 8) {
             Image(systemName: iconName)
                 .font(.caption)
                 .foregroundStyle(accentColor)
-            Text(category.name)
-                .font(.caption)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(category.name)
+                    .font(.caption)
+                    .lineLimit(1)
+                if showMissing {
+                    MissingTargetValue(text: missingText, style: .inline)
+                }
+            }
             Spacer()
-            Text(targetSummary)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
             StatusBadge(status: progress.status)
         }
         .padding(.horizontal, 10)
@@ -546,29 +930,67 @@ private struct CategoryCapsuleTile: View {
             Text(category.name)
             Text("Target: \(category.targetRule.displayText(unit: category.unitName))")
             Text("Total: \(total.cleanNumber) \(category.unitName)")
+            if showMissing {
+                Text("Missing: \(missingText)")
+            }
             Text(progress.status.label)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(category.name), \(progress.status.label), \(total.cleanNumber) \(category.unitName)")
+        .accessibilityLabel(showMissing ? "\(category.name), \(progress.status.label), missing \(missingText)" : "\(category.name), \(progress.status.label)")
     }
 }
 
-private func categoryTargetSummary(total: Double, rule: TargetRule) -> String {
-    let totalText = total.cleanNumber
-    let targetText = targetTargetText(rule: rule)
-    return "\(totalText)/\(targetText)"
+private enum MissingTargetStyle {
+    case stacked
+    case inline
 }
 
-private func targetTargetText(rule: TargetRule) -> String {
+private struct MissingTargetValue: View {
+    let text: String
+    let style: MissingTargetStyle
+
+    var body: some View {
+        switch style {
+        case .stacked:
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Missing")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(text)
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        case .inline:
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Text("Missing ")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(text)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.red)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+        }
+    }
+}
+
+private func missingAmount(rule: TargetRule, total: Double) -> Double {
     switch rule {
-    case .exact(let value):
-        return value.cleanNumber
-    case .atLeast(let value):
-        return value.cleanNumber
-    case .atMost(let value):
-        return "<=\(value.cleanNumber)"
-    case .range(let min, let max):
-        return "\(min.cleanNumber)-\(max.cleanNumber)"
+    case .exact(let target):
+        return max(0, target - total)
+    case .atLeast(let target):
+        return max(0, target - total)
+    case .atMost(let target):
+        return max(0, target - total)
+    case .range(let minValue, let maxValue):
+        if total < minValue { return Swift.max(0, minValue - total) }
+        if total > maxValue { return 0 }
+        return 0
     }
 }
 
@@ -577,7 +999,6 @@ private struct TodayMealBreakdownView: View {
     let entries: [DailyLogEntry]
     let categories: [Core.Category]
     let style: MealDisplayStyle
-    let onSelectMeal: (MealSlot) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -589,15 +1010,13 @@ private struct TodayMealBreakdownView: View {
                 MealOverviewGrid(
                     mealSlots: mealSlots,
                     entries: entries,
-                    categories: categories,
-                    onSelectMeal: onSelectMeal
+                    categories: categories
                 )
             case .stackedStrips:
                 MealStripList(
                     mealSlots: mealSlots,
                     entries: entries,
-                    categories: categories,
-                    onSelectMeal: onSelectMeal
+                    categories: categories
                 )
             }
         }
@@ -608,7 +1027,6 @@ private struct MealOverviewGrid: View {
     let mealSlots: [MealSlot]
     let entries: [DailyLogEntry]
     let categories: [Core.Category]
-    let onSelectMeal: (MealSlot) -> Void
     private let columns = [GridItem(.adaptive(minimum: 130), spacing: 12)]
 
     var body: some View {
@@ -618,13 +1036,17 @@ private struct MealOverviewGrid: View {
                 let slotEntries = entries.filter { $0.mealSlotID == slot.id }
                 let total = slotEntries.reduce(0) { $0 + $1.portion.value }
                 let loggedCategories = Set(slotEntries.filter { $0.portion.value > 0 }.map { $0.categoryID }).count
-                MealOverviewCard(
-                    mealSlot: slot,
-                    total: total,
-                    loggedCategories: loggedCategories,
-                    totalCategories: enabledCategories.count,
-                    onSelectMeal: { onSelectMeal(slot) }
-                )
+                NavigationLink {
+                    MealDayDetailView(mealSlot: slot)
+                } label: {
+                    MealOverviewCard(
+                        mealSlot: slot,
+                        total: total,
+                        loggedCategories: loggedCategories,
+                        totalCategories: enabledCategories.count
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -635,25 +1057,18 @@ private struct MealOverviewCard: View {
     let total: Double
     let loggedCategories: Int
     let totalCategories: Int
-    let onSelectMeal: () -> Void
     private var iconName: String { MealIconPalette.iconName(for: mealSlot) }
 
     var body: some View {
         let progress = totalCategories > 0 ? Double(loggedCategories) / Double(totalCategories) : 0
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Button {
-                    onSelectMeal()
-                } label: {
-                    ProgressRing(
-                        progress: progress,
-                        accent: .blue,
-                        iconName: iconName,
-                        size: 40
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Show \(mealSlot.name) details")
+                ProgressRing(
+                    progress: progress,
+                    accent: .blue,
+                    iconName: iconName,
+                    size: 40
+                )
                 Spacer()
             }
             Text(mealSlot.name)
@@ -684,7 +1099,6 @@ private struct MealStripList: View {
     let mealSlots: [MealSlot]
     let entries: [DailyLogEntry]
     let categories: [Core.Category]
-    let onSelectMeal: (MealSlot) -> Void
 
     var body: some View {
         let enabledCategories = categories.filter { $0.isEnabled }
@@ -693,13 +1107,17 @@ private struct MealStripList: View {
                 let slotEntries = entries.filter { $0.mealSlotID == slot.id }
                 let total = slotEntries.reduce(0) { $0 + $1.portion.value }
                 let loggedCategories = Set(slotEntries.filter { $0.portion.value > 0 }.map { $0.categoryID }).count
-                MealStripRow(
-                    mealSlot: slot,
-                    total: total,
-                    loggedCategories: loggedCategories,
-                    totalCategories: enabledCategories.count,
-                    onSelectMeal: { onSelectMeal(slot) }
-                )
+                NavigationLink {
+                    MealDayDetailView(mealSlot: slot)
+                } label: {
+                    MealStripRow(
+                        mealSlot: slot,
+                        total: total,
+                        loggedCategories: loggedCategories,
+                        totalCategories: enabledCategories.count
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -710,20 +1128,13 @@ private struct MealStripRow: View {
     let total: Double
     let loggedCategories: Int
     let totalCategories: Int
-    let onSelectMeal: () -> Void
     private var iconName: String { MealIconPalette.iconName(for: mealSlot) }
 
     var body: some View {
         let progress = totalCategories > 0 ? Double(loggedCategories) / Double(totalCategories) : 0
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Button {
-                    onSelectMeal()
-                } label: {
-                    mealIcon
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Show \(mealSlot.name) details")
+                mealIcon
                 Text(mealSlot.name)
                     .font(.caption)
                     .lineLimit(1)
@@ -767,6 +1178,8 @@ private struct TodayMealDetailsSection: View {
     let mealSlots: [MealSlot]
     let entries: [DailyLogEntry]
     let categories: [Core.Category]
+    let foodItems: [FoodItem]
+    let onViewDetails: (DailyLogEntry) -> Void
     let onEdit: (DailyLogEntry) -> Void
     let onDelete: (DailyLogEntry) -> Void
 
@@ -781,6 +1194,8 @@ private struct TodayMealDetailsSection: View {
                     mealSlot: slot,
                     entries: slotEntries,
                     categories: categories,
+                    foodItems: foodItems,
+                    onViewDetails: onViewDetails,
                     onEdit: onEdit,
                     onDelete: onDelete
                 )
@@ -794,6 +1209,8 @@ private struct MealSectionView: View {
     let mealSlot: MealSlot
     let entries: [DailyLogEntry]
     let categories: [Core.Category]
+    let foodItems: [FoodItem]
+    let onViewDetails: (DailyLogEntry) -> Void
     let onEdit: (DailyLogEntry) -> Void
     let onDelete: (DailyLogEntry) -> Void
     private func categoryColor(for entry: DailyLogEntry) -> Color {
@@ -823,7 +1240,9 @@ private struct MealSectionView: View {
                     MealEntryRow(
                         entry: entry,
                         categoryName: categoryName(for: entry),
+                        foodName: foodName(for: entry),
                         categoryColor: categoryColor(for: entry),
+                        onViewDetails: onViewDetails,
                         onEdit: onEdit,
                         onDelete: onDelete
                     )
@@ -840,12 +1259,20 @@ private struct MealSectionView: View {
     private func categoryName(for entry: DailyLogEntry) -> String {
         categories.first(where: { $0.id == entry.categoryID })?.name ?? "Category"
     }
+
+    private func foodName(for entry: DailyLogEntry) -> String? {
+        guard let foodID = entry.foodItemID else { return nil }
+        let name = foodItems.first(where: { $0.id == foodID })?.name ?? ""
+        return name.isEmpty ? nil : name
+    }
 }
 
 private struct MealEntryRow: View {
     let entry: DailyLogEntry
     let categoryName: String
+    let foodName: String?
     let categoryColor: Color
+    let onViewDetails: (DailyLogEntry) -> Void
     let onEdit: (DailyLogEntry) -> Void
     let onDelete: (DailyLogEntry) -> Void
 
@@ -857,6 +1284,11 @@ private struct MealEntryRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(categoryName)
                     .font(.subheadline)
+                if let foodName {
+                    Text(foodName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if let note = entry.notes?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !note.isEmpty {
                     Text(note)
@@ -873,6 +1305,10 @@ private struct MealEntryRow: View {
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color(.systemBackground))
         )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onViewDetails(entry)
+        }
         .swipeActions(edge: .trailing) {
             Button("Delete", role: .destructive) {
                 onDelete(entry)
@@ -884,6 +1320,122 @@ private struct MealEntryRow: View {
         .contextMenu {
             Button("Edit") { onEdit(entry) }
             Button("Delete", role: .destructive) { onDelete(entry) }
+        }
+    }
+}
+
+private struct EntryDetailSheet: View {
+    let entry: DailyLogEntry
+    let categories: [Core.Category]
+    let mealSlots: [MealSlot]
+    let foodItems: [FoodItem]
+    let units: [Core.FoodUnit]
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var category: Core.Category? {
+        categories.first(where: { $0.id == entry.categoryID })
+    }
+
+    private var mealSlot: MealSlot? {
+        mealSlots.first(where: { $0.id == entry.mealSlotID })
+    }
+
+    private var foodItem: FoodItem? {
+        guard let foodID = entry.foodItemID else { return nil }
+        return foodItems.first(where: { $0.id == foodID })
+    }
+
+    private var amountUnitSymbol: String? {
+        guard let unitID = entry.amountUnitID else { return nil }
+        return units.first(where: { $0.id == unitID })?.symbol
+    }
+
+    private var foodUnitSymbol: String? {
+        guard let unitID = foodItem?.unitID else { return nil }
+        return units.first(where: { $0.id == unitID })?.symbol
+    }
+
+    private var notesText: String? {
+        let trimmed = entry.notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var portionText: String {
+        let unitName = category?.unitName ?? ""
+        return unitName.isEmpty ? entry.portion.value.cleanNumber : "\(entry.portion.value.cleanNumber) \(unitName)"
+    }
+
+    private var amountText: String? {
+        guard let amountValue = entry.amountValue else { return nil }
+        guard let unit = amountUnitSymbol, !unit.isEmpty else { return amountValue.cleanNumber }
+        return "\(amountValue.cleanNumber) \(unit)"
+    }
+
+    private var categoryColor: Color {
+        guard let category else { return CategoryColorPalette.fallback }
+        return CategoryColorPalette.color(for: category)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Meal") {
+                    Text(mealSlot?.name ?? "Meal")
+                }
+
+                Section("Category") {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(categoryColor)
+                            .frame(width: 10, height: 10)
+                        Text(category?.name ?? "Category")
+                    }
+                }
+
+                Section("Portion") {
+                    Text(portionText)
+                }
+
+                Section("Amount") {
+                    if let amountText {
+                        Text(amountText)
+                    } else {
+                        Text("No amount")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Food") {
+                    if let item = foodItem {
+                        FoodItemRow(
+                            item: item,
+                            categoryName: category?.name ?? "Category",
+                            unitSymbol: foodUnitSymbol,
+                            showsFavorite: false,
+                            thumbnailSize: 34
+                        )
+                    } else {
+                        Text("No food selected")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Comments") {
+                    if let notesText {
+                        Text(notesText)
+                    } else {
+                        Text("No comments")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("Entry Details")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 }
@@ -1061,6 +1613,20 @@ private enum CategoryDisplayStyle: String, CaseIterable, Identifiable {
     }
 }
 
+enum QuickAddStyle: String, CaseIterable, Identifiable {
+    case standard
+    case categoryFirst
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .standard: return "Standard"
+        case .categoryFirst: return "Category-first (Alt)"
+        }
+    }
+}
+
 private enum MealDisplayStyle: String, CaseIterable, Identifiable {
     case miniCards
     case stackedStrips
@@ -1078,6 +1644,7 @@ private enum MealDisplayStyle: String, CaseIterable, Identifiable {
 private struct TodayDisplaySettingsSheet: View {
     @Binding var categorySelection: CategoryDisplayStyle
     @Binding var mealSelection: MealDisplayStyle
+    @Binding var quickAddStyle: QuickAddStyle
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -1095,6 +1662,15 @@ private struct TodayDisplaySettingsSheet: View {
                 Section("Meals") {
                     Picker("Meal style", selection: $mealSelection) {
                         ForEach(MealDisplayStyle.allCases) { style in
+                            Text(style.label).tag(style)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                Section("Quick Add") {
+                    Picker("Flow", selection: $quickAddStyle) {
+                        ForEach(QuickAddStyle.allCases) { style in
                             Text(style.label).tag(style)
                         }
                     }
@@ -1131,7 +1707,9 @@ struct QuickAddSheet: View {
     let foodItems: [FoodItem]
     let units: [Core.FoodUnit]
     let preselectedCategoryID: UUID?
+    let preselectedMealSlotID: UUID?
     let contextDate: Date?
+    let style: QuickAddStyle
     let onSave: (MealSlot, Core.Category, Double, Double?, UUID?, String?, UUID?) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -1143,12 +1721,37 @@ struct QuickAddSheet: View {
     @State private var amountText: String = ""
     @State private var isSyncing = false
     @State private var notes: String = ""
+
+    init(
+        categories: [Core.Category],
+        mealSlots: [MealSlot],
+        foodItems: [FoodItem],
+        units: [Core.FoodUnit],
+        preselectedCategoryID: UUID?,
+        preselectedMealSlotID: UUID?,
+        contextDate: Date?,
+        style: QuickAddStyle = .standard,
+        onSave: @escaping (MealSlot, Core.Category, Double, Double?, UUID?, String?, UUID?) -> Void
+    ) {
+        self.categories = categories
+        self.mealSlots = mealSlots
+        self.foodItems = foodItems
+        self.units = units
+        self.preselectedCategoryID = preselectedCategoryID
+        self.preselectedMealSlotID = preselectedMealSlotID
+        self.contextDate = contextDate
+        self.style = style
+        self.onSave = onSave
+    }
     private var selectedCategoryColor: Color {
         guard let selectedCategoryID,
               let category = categories.first(where: { $0.id == selectedCategoryID }) else {
             return CategoryColorPalette.fallback
         }
         return CategoryColorPalette.color(for: category)
+    }
+    private var isCategoryFirst: Bool {
+        style == .categoryFirst
     }
     private var availableFoodItems: [FoodItem] {
         let allowedCategoryIDs = Set(categories.map(\.id))
@@ -1177,6 +1780,22 @@ struct QuickAddSheet: View {
         amountPerPortion != nil && selectedUnit != nil
     }
 
+    private var fallbackMealSlot: MealSlot? {
+        if let preselectedMealSlotID,
+           let slot = mealSlots.first(where: { $0.id == preselectedMealSlotID }) {
+            return slot
+        }
+        return mealSlots.first
+    }
+
+    private var resolvedMealSlot: MealSlot? {
+        if let mealID = selectedMealSlotID,
+           let meal = mealSlots.first(where: { $0.id == mealID }) {
+            return meal
+        }
+        return isCategoryFirst ? fallbackMealSlot : nil
+    }
+
     private var parsedAmount: Double? {
         let trimmed = amountText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -1186,7 +1805,7 @@ struct QuickAddSheet: View {
     }
 
     private var canSave: Bool {
-        guard selectedMealSlotID != nil, selectedCategoryID != nil else { return false }
+        guard selectedCategoryID != nil, resolvedMealSlot != nil else { return false }
         if inputMode == .amount && amountInputEnabled {
             return parsedAmount != nil
         }
@@ -1203,101 +1822,20 @@ struct QuickAddSheet: View {
                     }
                 }
 
-                Section("Meal") {
-                    Picker("Meal Slot", selection: $selectedMealSlotID) {
-                        ForEach(mealSlots) { slot in
-                            Text(slot.name).tag(Optional(slot.id))
-                        }
-                    }
+                if isCategoryFirst {
+                    categorySection
+                    foodSection
+                    mealSection
+                } else {
+                    mealSection
+                    foodSection
+                    categorySection
                 }
 
-                Section("Food") {
-                    if availableFoodItems.isEmpty {
-                        Text("No foods in your library yet.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        NavigationLink {
-                            FoodLibraryPicker(
-                                items: availableFoodItems,
-                                categories: categories,
-                                units: units,
-                                selectedCategoryID: selectedCategoryID,
-                                selectedFoodID: $selectedFoodID
-                            )
-                        } label: {
-                            if let selectedFoodID,
-                               let item = availableFoodItems.first(where: { $0.id == selectedFoodID }) {
-                                FoodItemRow(
-                                    item: item,
-                                    categoryName: categoryName(for: item.categoryID),
-                                    unitSymbol: selectedUnit?.symbol,
-                                    thumbnailSize: 34
-                                )
-                            } else {
-                                Text("Choose a food")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-
-                Section("Category") {
-                    Picker("Category", selection: $selectedCategoryID) {
-                        ForEach(categories) { category in
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(CategoryColorPalette.color(for: category))
-                                    .frame(width: 10, height: 10)
-                                Text(category.name)
-                            }
-                            .tag(Optional(category.id))
-                        }
-                    }
-                }
-
-                Section("Input Mode") {
-                    Picker("Input Mode", selection: $inputMode) {
-                        ForEach(EntryInputMode.allCases) { mode in
-                            Text(mode.label).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(!amountInputEnabled)
-                    if !amountInputEnabled {
-                        Text("Select a food with a portion size to enter amounts.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Portion") {
-                    PortionWheelControl(portion: $portion, accentColor: selectedCategoryColor)
-                        .disabled(inputMode == .amount && amountInputEnabled)
-                }
-
-                Section("Amount") {
-                    HStack {
-                        TextField("0", text: $amountText)
-                            .keyboardType(selectedUnit?.allowsDecimal == false ? .numberPad : .decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .disabled(inputMode == .portion || !amountInputEnabled)
-                        if let unitSymbol = selectedUnit?.symbol {
-                            Text(unitSymbol)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    if let amountPerPortion, let unitSymbol = selectedUnit?.symbol {
-                        Text("1 portion = \(amountPerPortion.cleanNumber) \(unitSymbol)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Notes") {
-                    TextField("Add a note", text: $notes, axis: .vertical)
-                        .lineLimit(3, reservesSpace: true)
-                }
+                inputModeSection
+                portionSection
+                amountSection
+                notesSection
             }
             .navigationTitle("Quick Add")
             .toolbar {
@@ -1306,10 +1844,9 @@ struct QuickAddSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
-                        guard let mealID = selectedMealSlotID,
-                              let categoryID = selectedCategoryID,
-                              let meal = mealSlots.first(where: { $0.id == mealID }),
-                              let category = categories.first(where: { $0.id == categoryID }) else {
+                        guard let categoryID = selectedCategoryID,
+                              let category = categories.first(where: { $0.id == categoryID }),
+                              let meal = resolvedMealSlot else {
                             return
                         }
                         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1345,7 +1882,14 @@ struct QuickAddSheet: View {
                 }
             }
             .onAppear {
-                selectedMealSlotID = selectedMealSlotID ?? mealSlots.first?.id
+                if selectedMealSlotID == nil {
+                    if let preselectedMealSlotID,
+                       mealSlots.contains(where: { $0.id == preselectedMealSlotID }) {
+                        selectedMealSlotID = preselectedMealSlotID
+                    } else if !isCategoryFirst {
+                        selectedMealSlotID = mealSlots.first?.id
+                    }
+                }
                 if selectedCategoryID == nil {
                     if let preselectedCategoryID,
                        categories.contains(where: { $0.id == preselectedCategoryID }) {
@@ -1372,6 +1916,133 @@ struct QuickAddSheet: View {
                     syncAmountFromPortion()
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var mealSection: some View {
+        Section("Meal") {
+            Picker("Meal Slot", selection: $selectedMealSlotID) {
+                if isCategoryFirst {
+                    Text("Auto").tag(Optional<UUID>.none)
+                }
+                ForEach(mealSlots) { slot in
+                    Text(slot.name).tag(Optional(slot.id))
+                }
+            }
+            if isCategoryFirst,
+               selectedMealSlotID == nil,
+               let fallbackMealSlot {
+                Text("Defaults to \(fallbackMealSlot.name).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var foodSection: some View {
+        Section("Food") {
+            if availableFoodItems.isEmpty {
+                Text("No foods in your library yet.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                NavigationLink {
+                    FoodLibraryPicker(
+                        items: availableFoodItems,
+                        categories: categories,
+                        units: units,
+                        selectedCategoryID: selectedCategoryID,
+                        selectedFoodID: $selectedFoodID
+                    )
+                } label: {
+                    if let selectedFoodID,
+                       let item = availableFoodItems.first(where: { $0.id == selectedFoodID }) {
+                        FoodItemRow(
+                            item: item,
+                            categoryName: categoryName(for: item.categoryID),
+                            unitSymbol: selectedUnit?.symbol,
+                            thumbnailSize: 34
+                        )
+                    } else {
+                        Text("Choose a food")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var categorySection: some View {
+        Section("Category") {
+            Picker("Category", selection: $selectedCategoryID) {
+                ForEach(categories) { category in
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(CategoryColorPalette.color(for: category))
+                            .frame(width: 10, height: 10)
+                        Text(category.name)
+                    }
+                    .tag(Optional(category.id))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var inputModeSection: some View {
+        Section("Input Mode") {
+            Picker("Input Mode", selection: $inputMode) {
+                ForEach(EntryInputMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(!amountInputEnabled)
+            if !amountInputEnabled {
+                Text("Select a food with a portion size to enter amounts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var portionSection: some View {
+        Section("Portion") {
+            PortionWheelControl(portion: $portion, accentColor: selectedCategoryColor)
+                .disabled(inputMode == .amount && amountInputEnabled)
+        }
+    }
+
+    @ViewBuilder
+    private var amountSection: some View {
+        Section("Amount") {
+            HStack {
+                TextField("0", text: $amountText)
+                    .keyboardType(selectedUnit?.allowsDecimal == false ? .numberPad : .decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .disabled(inputMode == .portion || !amountInputEnabled)
+                if let unitSymbol = selectedUnit?.symbol {
+                    Text(unitSymbol)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let amountPerPortion, let unitSymbol = selectedUnit?.symbol {
+                Text("1 portion = \(amountPerPortion.cleanNumber) \(unitSymbol)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var notesSection: some View {
+        Section("Notes") {
+            TextField("Add a note", text: $notes, axis: .vertical)
+                .lineLimit(3, reservesSpace: true)
         }
     }
 

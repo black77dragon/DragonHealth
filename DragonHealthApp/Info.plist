@@ -20,7 +20,11 @@
 		<string>com.blackdragon.DragonHealthApp.health.refresh</string>
 	</array>
 	<key>NSHealthShareUsageDescription</key>
-	<string>DragonHealth reads your health data to keep body metrics and steps in sync.</string>
+	<string>DragonHealth reads your health data to keep body metrics, steps, and active energy (Move kcal) in sync.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>DragonHealth uses the microphone to capture voice logs.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>DragonHealth uses speech recognition to transcribe voice logs.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

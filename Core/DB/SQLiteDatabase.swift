@@ -116,6 +116,126 @@ public actor SQLiteDatabase: DBGateway {
         try step(statement)
     }
 
+    public func fetchScoreProfiles() async throws -> [UUID: Core.ScoreProfile] {
+        let sql = """
+        SELECT category_id, weight, under_penalty, over_penalty, under_soft_limit, over_soft_limit, curve, cap_over
+        FROM score_profiles;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        var profiles: [UUID: Core.ScoreProfile] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let categoryID = readUUID(statement, index: 0)
+            let weight = sqlite3_column_double(statement, 1)
+            let underPenalty = sqlite3_column_double(statement, 2)
+            let overPenalty = sqlite3_column_double(statement, 3)
+            let underSoftLimit = sqlite3_column_double(statement, 4)
+            let overSoftLimit = sqlite3_column_double(statement, 5)
+            let curveRaw = readText(statement, index: 6)
+            let capOver = readBool(statement, index: 7)
+            let curve = Core.ScoreCurve(rawValue: curveRaw) ?? .linear
+            profiles[categoryID] = Core.ScoreProfile(
+                weight: weight,
+                underPenaltyPerUnit: underPenalty,
+                overPenaltyPerUnit: overPenalty,
+                underSoftLimit: underSoftLimit,
+                overSoftLimit: overSoftLimit,
+                curve: curve,
+                capOverAtTarget: capOver
+            )
+        }
+        return profiles
+    }
+
+    public func upsertScoreProfile(categoryID: UUID, profile: Core.ScoreProfile) async throws {
+        let sql = """
+        INSERT INTO score_profiles (
+            category_id, weight, under_penalty, over_penalty, under_soft_limit, over_soft_limit, curve, cap_over
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(category_id) DO UPDATE SET
+            weight = excluded.weight,
+            under_penalty = excluded.under_penalty,
+            over_penalty = excluded.over_penalty,
+            under_soft_limit = excluded.under_soft_limit,
+            over_soft_limit = excluded.over_soft_limit,
+            curve = excluded.curve,
+            cap_over = excluded.cap_over;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindUUID(statement, index: 1, value: categoryID)
+        bindDouble(statement, index: 2, value: profile.weight)
+        bindDouble(statement, index: 3, value: profile.underPenaltyPerUnit)
+        bindDouble(statement, index: 4, value: profile.overPenaltyPerUnit)
+        bindDouble(statement, index: 5, value: profile.underSoftLimit)
+        bindDouble(statement, index: 6, value: profile.overSoftLimit)
+        bindText(statement, index: 7, value: profile.curve.rawValue)
+        bindBool(statement, index: 8, value: profile.capOverAtTarget)
+        try step(statement)
+    }
+
+    public func deleteScoreProfile(categoryID: UUID) async throws {
+        let sql = "DELETE FROM score_profiles WHERE category_id = ?;"
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindUUID(statement, index: 1, value: categoryID)
+        try step(statement)
+    }
+
+    public func fetchCompensationRules() async throws -> [Core.CompensationRule] {
+        let sql = """
+        SELECT from_category_id, to_category_id, ratio, max_offset
+        FROM compensation_rules;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        var rules: [Core.CompensationRule] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let fromID = readUUID(statement, index: 0)
+            let toID = readUUID(statement, index: 1)
+            let ratio = sqlite3_column_double(statement, 2)
+            let maxOffset = sqlite3_column_double(statement, 3)
+            rules.append(
+                Core.CompensationRule(
+                    fromCategoryID: fromID,
+                    toCategoryID: toID,
+                    ratio: ratio,
+                    maxOffset: maxOffset
+                )
+            )
+        }
+        return rules
+    }
+
+    public func upsertCompensationRule(_ rule: Core.CompensationRule) async throws {
+        let sql = """
+        INSERT INTO compensation_rules (from_category_id, to_category_id, ratio, max_offset)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(from_category_id, to_category_id) DO UPDATE SET
+            ratio = excluded.ratio,
+            max_offset = excluded.max_offset;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindUUID(statement, index: 1, value: rule.fromCategoryID)
+        bindUUID(statement, index: 2, value: rule.toCategoryID)
+        bindDouble(statement, index: 3, value: rule.ratio)
+        bindDouble(statement, index: 4, value: rule.maxOffset)
+        try step(statement)
+    }
+
+    public func deleteCompensationRule(_ rule: Core.CompensationRule) async throws {
+        let sql = """
+        DELETE FROM compensation_rules
+        WHERE from_category_id = ? AND to_category_id = ?;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindUUID(statement, index: 1, value: rule.fromCategoryID)
+        bindUUID(statement, index: 2, value: rule.toCategoryID)
+        try step(statement)
+    }
+
     public func fetchUnits() async throws -> [Core.FoodUnit] {
         let sql = """
         SELECT id, name, symbol, allows_decimal, is_enabled, sort_order
@@ -216,6 +336,7 @@ public actor SQLiteDatabase: DBGateway {
                profile_image_path,
                height_cm,
                target_weight_kg,
+               target_weight_date,
                motivation,
                doctor_name,
                nutritionist_name,
@@ -229,18 +350,22 @@ public actor SQLiteDatabase: DBGateway {
         defer { sqlite3_finalize(statement) }
         if sqlite3_step(statement) == SQLITE_ROW {
             let minutes = Int(sqlite3_column_int(statement, 0))
-            let appearanceRaw = readOptionalText(statement, index: 9)
+            let appearanceRaw = readOptionalText(statement, index: 10)
             let appearance = Core.AppAppearance(rawValue: appearanceRaw ?? "") ?? .system
+            let targetWeightDate = readOptionalDouble(statement, index: 4).map {
+                Date(timeIntervalSince1970: $0)
+            }
             return Core.AppSettings(
                 dayCutoffMinutes: minutes,
                 profileImagePath: readOptionalText(statement, index: 1),
                 heightCm: readOptionalDouble(statement, index: 2),
                 targetWeightKg: readOptionalDouble(statement, index: 3),
-                motivation: readOptionalText(statement, index: 4),
-                doctorName: readOptionalText(statement, index: 5),
-                nutritionistName: readOptionalText(statement, index: 6),
-                foodSeedVersion: Int(sqlite3_column_int(statement, 7)),
-                showLaunchSplash: sqlite3_column_int(statement, 8) != 0,
+                targetWeightDate: targetWeightDate,
+                motivation: readOptionalText(statement, index: 5),
+                doctorName: readOptionalText(statement, index: 6),
+                nutritionistName: readOptionalText(statement, index: 7),
+                foodSeedVersion: Int(sqlite3_column_int(statement, 8)),
+                showLaunchSplash: sqlite3_column_int(statement, 9) != 0,
                 appearance: appearance
             )
         }
@@ -255,6 +380,7 @@ public actor SQLiteDatabase: DBGateway {
             profile_image_path,
             height_cm,
             target_weight_kg,
+            target_weight_date,
             motivation,
             doctor_name,
             nutritionist_name,
@@ -262,12 +388,13 @@ public actor SQLiteDatabase: DBGateway {
             show_launch_splash,
             appearance_mode
         )
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             day_cutoff_minutes = excluded.day_cutoff_minutes,
             profile_image_path = excluded.profile_image_path,
             height_cm = excluded.height_cm,
             target_weight_kg = excluded.target_weight_kg,
+            target_weight_date = excluded.target_weight_date,
             motivation = excluded.motivation,
             doctor_name = excluded.doctor_name,
             nutritionist_name = excluded.nutritionist_name,
@@ -281,12 +408,13 @@ public actor SQLiteDatabase: DBGateway {
         bindOptionalText(statement, index: 2, value: settings.profileImagePath)
         bindOptionalDouble(statement, index: 3, value: settings.heightCm)
         bindOptionalDouble(statement, index: 4, value: settings.targetWeightKg)
-        bindOptionalText(statement, index: 5, value: settings.motivation)
-        bindOptionalText(statement, index: 6, value: settings.doctorName)
-        bindOptionalText(statement, index: 7, value: settings.nutritionistName)
-        bindInt(statement, index: 8, value: settings.foodSeedVersion)
-        bindInt(statement, index: 9, value: settings.showLaunchSplash ? 1 : 0)
-        bindText(statement, index: 10, value: settings.appearance.rawValue)
+        bindOptionalDouble(statement, index: 5, value: settings.targetWeightDate?.timeIntervalSince1970)
+        bindOptionalText(statement, index: 6, value: settings.motivation)
+        bindOptionalText(statement, index: 7, value: settings.doctorName)
+        bindOptionalText(statement, index: 8, value: settings.nutritionistName)
+        bindInt(statement, index: 9, value: settings.foodSeedVersion)
+        bindInt(statement, index: 10, value: settings.showLaunchSplash ? 1 : 0)
+        bindText(statement, index: 11, value: settings.appearance.rawValue)
         try step(statement)
     }
 
@@ -484,7 +612,7 @@ public actor SQLiteDatabase: DBGateway {
 
     public func fetchBodyMetrics() async throws -> [Core.BodyMetricEntry] {
         let sql = """
-        SELECT day, weight_kg, muscle_mass, body_fat_percent, waist_cm, steps
+        SELECT day, weight_kg, muscle_mass, body_fat_percent, waist_cm, steps, active_energy_kcal
         FROM body_metrics
         ORDER BY day DESC;
         """
@@ -501,7 +629,8 @@ public actor SQLiteDatabase: DBGateway {
                     muscleMass: readOptionalDouble(statement, index: 2),
                     bodyFatPercent: readOptionalDouble(statement, index: 3),
                     waistCm: readOptionalDouble(statement, index: 4),
-                    steps: readOptionalDouble(statement, index: 5)
+                    steps: readOptionalDouble(statement, index: 5),
+                    activeEnergyKcal: readOptionalDouble(statement, index: 6)
                 )
             )
         }
@@ -511,14 +640,15 @@ public actor SQLiteDatabase: DBGateway {
     public func upsertBodyMetric(_ entry: Core.BodyMetricEntry) async throws {
         let dayKey = DayBoundary(cutoffMinutes: 0).dayKey(for: entry.date, calendar: calendar)
         let sql = """
-        INSERT INTO body_metrics (day, weight_kg, muscle_mass, body_fat_percent, waist_cm, steps)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO body_metrics (day, weight_kg, muscle_mass, body_fat_percent, waist_cm, steps, active_energy_kcal)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(day) DO UPDATE SET
             weight_kg = excluded.weight_kg,
             muscle_mass = excluded.muscle_mass,
             body_fat_percent = excluded.body_fat_percent,
             waist_cm = excluded.waist_cm,
-            steps = excluded.steps;
+            steps = excluded.steps,
+            active_energy_kcal = excluded.active_energy_kcal;
         """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -528,6 +658,7 @@ public actor SQLiteDatabase: DBGateway {
         bindOptionalDouble(statement, index: 4, value: entry.bodyFatPercent)
         bindOptionalDouble(statement, index: 5, value: entry.waistCm)
         bindOptionalDouble(statement, index: 6, value: entry.steps)
+        bindOptionalDouble(statement, index: 7, value: entry.activeEnergyKcal)
         try step(statement)
     }
 
@@ -717,7 +848,8 @@ public actor SQLiteDatabase: DBGateway {
             muscle_mass REAL,
             body_fat_percent REAL,
             waist_cm REAL,
-            steps REAL
+            steps REAL,
+            active_energy_kcal REAL
         );
         """, db: db)
 
@@ -737,6 +869,7 @@ public actor SQLiteDatabase: DBGateway {
             profile_image_path TEXT,
             height_cm REAL,
             target_weight_kg REAL,
+            target_weight_date REAL,
             motivation TEXT,
             doctor_name TEXT,
             nutritionist_name TEXT,
@@ -756,6 +889,29 @@ public actor SQLiteDatabase: DBGateway {
         );
         """, db: db)
         try execute("CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at);", db: db)
+
+        try execute("""
+        CREATE TABLE IF NOT EXISTS score_profiles (
+            category_id TEXT PRIMARY KEY,
+            weight REAL NOT NULL,
+            under_penalty REAL NOT NULL,
+            over_penalty REAL NOT NULL,
+            under_soft_limit REAL NOT NULL,
+            over_soft_limit REAL NOT NULL,
+            curve TEXT NOT NULL,
+            cap_over INTEGER NOT NULL
+        );
+        """, db: db)
+
+        try execute("""
+        CREATE TABLE IF NOT EXISTS compensation_rules (
+            from_category_id TEXT NOT NULL,
+            to_category_id TEXT NOT NULL,
+            ratio REAL NOT NULL,
+            max_offset REAL NOT NULL,
+            PRIMARY KEY (from_category_id, to_category_id)
+        );
+        """, db: db)
 
         try ensureColumns(
             table: "categories",
@@ -828,7 +984,8 @@ public actor SQLiteDatabase: DBGateway {
                 "muscle_mass": "REAL",
                 "body_fat_percent": "REAL",
                 "waist_cm": "REAL",
-                "steps": "REAL"
+                "steps": "REAL",
+                "active_energy_kcal": "REAL"
             ],
             db: db
         )
@@ -840,6 +997,7 @@ public actor SQLiteDatabase: DBGateway {
                 "profile_image_path": "TEXT",
                 "height_cm": "REAL",
                 "target_weight_kg": "REAL",
+                "target_weight_date": "REAL",
                 "motivation": "TEXT",
                 "doctor_name": "TEXT",
                 "nutritionist_name": "TEXT",
@@ -867,6 +1025,32 @@ public actor SQLiteDatabase: DBGateway {
                 "filename": "TEXT NOT NULL DEFAULT ''",
                 "file_type": "TEXT NOT NULL DEFAULT 'image'",
                 "created_at": "REAL NOT NULL DEFAULT 0"
+            ],
+            db: db
+        )
+
+        try ensureColumns(
+            table: "score_profiles",
+            definitions: [
+                "category_id": "TEXT NOT NULL DEFAULT ''",
+                "weight": "REAL NOT NULL DEFAULT 1",
+                "under_penalty": "REAL NOT NULL DEFAULT 1",
+                "over_penalty": "REAL NOT NULL DEFAULT 1",
+                "under_soft_limit": "REAL NOT NULL DEFAULT 1",
+                "over_soft_limit": "REAL NOT NULL DEFAULT 1",
+                "curve": "TEXT NOT NULL DEFAULT 'linear'",
+                "cap_over": "INTEGER NOT NULL DEFAULT 0"
+            ],
+            db: db
+        )
+
+        try ensureColumns(
+            table: "compensation_rules",
+            definitions: [
+                "from_category_id": "TEXT NOT NULL DEFAULT ''",
+                "to_category_id": "TEXT NOT NULL DEFAULT ''",
+                "ratio": "REAL NOT NULL DEFAULT 1",
+                "max_offset": "REAL NOT NULL DEFAULT 0"
             ],
             db: db
         )

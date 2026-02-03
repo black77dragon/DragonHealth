@@ -48,7 +48,8 @@ struct BodyMetricsView: View {
                     muscleMass: latestMetricValue(entries: sortedEntries, value: \.muscleMass),
                     bodyFatPercent: latestMetricValue(entries: sortedEntries, value: \.bodyFatPercent),
                     waistCm: latestMetricValue(entries: sortedEntries, value: \.waistCm),
-                    steps: latestMetricValue(entries: sortedEntries, value: \.steps)
+                    steps: latestMetricValue(entries: sortedEntries, value: \.steps),
+                    activeEnergyKcal: latestMetricValue(entries: sortedEntries, value: \.activeEnergyKcal)
                 )
                 let filteredEntries = timeFrame.filteredEntries(
                     from: sortedEntries,
@@ -60,12 +61,23 @@ struct BodyMetricsView: View {
                 let bodyFatPoints = metricPoints(entries: filteredEntries, value: \.bodyFatPercent)
                 let waistPoints = metricPoints(entries: filteredEntries, value: \.waistCm)
                 let stepsPoints = metricPoints(entries: filteredEntries, value: \.steps)
-
+                let activeEnergyPoints = metricPoints(entries: filteredEntries, value: \.activeEnergyKcal)
                 CurrentWeightCanvas(
                     latestWeight: latestWeight,
                     previousWeight: previousWeight,
                     lastWeekWeight: lastWeekWeight,
                     lastMonthWeight: lastMonthWeight
+                )
+                TargetWeightCanvas(
+                    targetWeight: store.settings.targetWeightKg,
+                    targetDate: store.settings.targetWeightDate
+                )
+                TargetProgressCanvas(
+                    currentWeight: latestWeight,
+                    targetWeight: store.settings.targetWeightKg,
+                    targetDate: store.settings.targetWeightDate,
+                    referenceDate: store.currentDay,
+                    calendar: store.appCalendar
                 )
                 BodyMetricAveragesCard(averages: averages, latestValues: latestValues)
                 AppleHealthSyncCard(
@@ -81,7 +93,8 @@ struct BodyMetricsView: View {
                     leanMassPoints: leanMassPoints,
                     bodyFatPoints: bodyFatPoints,
                     waistPoints: waistPoints,
-                    stepsPoints: stepsPoints
+                    stepsPoints: stepsPoints,
+                    activeEnergyPoints: activeEnergyPoints
                 )
 
                 if store.bodyMetrics.isEmpty {
@@ -153,22 +166,25 @@ private struct CurrentWeightCanvas: View {
     let lastMonthWeight: Double?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Current Weight")
-                    .font(.headline)
-                Text(latestWeight.map { "\($0.cleanNumber) kg" } ?? "--")
-                    .font(.system(size: 34, weight: .semibold, design: .rounded))
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 6) {
-                DeltaRow(label: "Last weight", delta: deltaValue(reference: previousWeight))
-                DeltaRow(label: "Last week", delta: deltaValue(reference: lastWeekWeight))
-                DeltaRow(label: "Last month", delta: deltaValue(reference: lastMonthWeight))
+        CanvasCard(accent: .blue, secondary: .mint) {
+            VStack(alignment: .leading, spacing: 12) {
+                CanvasTitle(text: "Current Weight", accent: .blue)
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(latestWeight.map { "\($0.cleanNumber) kg" } ?? "--")
+                            .font(.system(size: 36, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                    }
+                    Spacer()
+                    VStack(alignment: .leading, spacing: 8) {
+                        DeltaRow(label: "Last weight", delta: deltaValue(reference: previousWeight))
+                        DeltaRow(label: "Last week", delta: deltaValue(reference: lastWeekWeight))
+                        DeltaRow(label: "Last month", delta: deltaValue(reference: lastMonthWeight))
+                    }
+                    .frame(minWidth: 160)
+                }
             }
         }
-        .padding(16)
-        .background(weightCanvasBackground)
     }
 
     private func deltaValue(reference: Double?) -> DeltaValue? {
@@ -183,30 +199,6 @@ private struct CurrentWeightCanvas: View {
         return DeltaValue(value: delta, color: .secondary)
     }
 
-    private var weightCanvasBackground: some View {
-        Canvas { context, size in
-            let rect = CGRect(origin: .zero, size: size)
-            let backgroundPath = RoundedRectangle(cornerRadius: 16, style: .continuous).path(in: rect)
-            context.fill(backgroundPath, with: .color(Color(.secondarySystemBackground)))
-
-            let orbSize = min(size.width, size.height) * 0.65
-            let topOrb = CGRect(
-                x: size.width - orbSize * 0.8,
-                y: -orbSize * 0.3,
-                width: orbSize,
-                height: orbSize
-            )
-            let bottomOrb = CGRect(
-                x: -orbSize * 0.3,
-                y: size.height - orbSize * 0.55,
-                width: orbSize * 0.8,
-                height: orbSize * 0.8
-            )
-            context.fill(Path(ellipseIn: topOrb), with: .color(Color.blue.opacity(0.12)))
-            context.fill(Path(ellipseIn: bottomOrb), with: .color(Color.green.opacity(0.12)))
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
 }
 
 private struct DeltaValue {
@@ -223,21 +215,242 @@ private struct DeltaRow: View {
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Text(deltaText)
                 .font(.caption)
                 .foregroundStyle(delta?.color ?? .secondary)
+                .monospacedDigit()
+                .frame(minWidth: 60, alignment: .trailing)
         }
     }
 
     private var deltaText: String {
         guard let delta else { return "--" }
         if delta.value > 0 {
-            return "+\(delta.value.cleanNumber)kg"
+            return "+\(delta.value.cleanNumber) kg"
         }
         if delta.value < 0 {
-            return "\(delta.value.cleanNumber)kg"
+            return "\(delta.value.cleanNumber) kg"
         }
-        return "0kg"
+        return "0 kg"
+    }
+}
+
+private struct CanvasTitle: View {
+    let text: String
+    let accent: Color
+
+    var body: some View {
+        Text(text.uppercased())
+            .font(.caption2.weight(.semibold))
+            .tracking(1.4)
+            .foregroundStyle(
+                LinearGradient(
+                    colors: [accent, accent.opacity(0.65)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+    }
+}
+
+private struct CanvasCard<Content: View>: View {
+    let accent: Color
+    let secondary: Color
+    let content: Content
+
+    init(accent: Color, secondary: Color = .teal, @ViewBuilder content: () -> Content) {
+        self.accent = accent
+        self.secondary = secondary
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(16)
+            .background(cardBackground)
+            .overlay(cardStroke)
+            .shadow(color: accent.opacity(0.18), radius: 18, x: 0, y: 10)
+    }
+
+    private var cardBackground: some View {
+        Canvas { context, size in
+            let rect = CGRect(origin: .zero, size: size)
+            let shape = RoundedRectangle(cornerRadius: 18, style: .continuous).path(in: rect)
+            context.fill(shape, with: .color(Color(.secondarySystemBackground)))
+
+            let orbSize = min(size.width, size.height) * 0.7
+            let topOrb = CGRect(
+                x: size.width - orbSize * 0.75,
+                y: -orbSize * 0.35,
+                width: orbSize,
+                height: orbSize
+            )
+            let bottomOrb = CGRect(
+                x: -orbSize * 0.35,
+                y: size.height - orbSize * 0.5,
+                width: orbSize * 0.85,
+                height: orbSize * 0.85
+            )
+            context.fill(Path(ellipseIn: topOrb), with: .color(accent.opacity(0.18)))
+            context.fill(Path(ellipseIn: bottomOrb), with: .color(secondary.opacity(0.16)))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var cardStroke: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .stroke(Color.white.opacity(0.35), lineWidth: 0.7)
+    }
+}
+
+private struct CanvasMetricRow: View {
+    let label: String
+    let value: String
+    var valueColor: Color = .primary
+    var valueFont: Font = .callout
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(valueFont)
+                .foregroundStyle(valueColor)
+                .monospacedDigit()
+                .frame(minWidth: 64, alignment: .trailing)
+        }
+    }
+}
+
+private struct TargetWeightCanvas: View {
+    let targetWeight: Double?
+    let targetDate: Date?
+
+    var body: some View {
+        CanvasCard(accent: .purple, secondary: .pink) {
+            VStack(alignment: .leading, spacing: 12) {
+                CanvasTitle(text: "Target Weight", accent: .purple)
+                CanvasMetricRow(
+                    label: "Target Weight",
+                    value: targetWeightText,
+                    valueFont: .system(size: 30, weight: .semibold, design: .rounded)
+                )
+                CanvasMetricRow(label: "Target Date", value: targetDateText)
+            }
+        }
+    }
+
+    private var targetWeightText: String {
+        guard let targetWeight else { return "--" }
+        return "\(targetWeight.cleanNumber) kg"
+    }
+
+    private var targetDateText: String {
+        targetDate.map { $0.formatted(.dateTime.month(.abbreviated).day().year()) } ?? "--"
+    }
+}
+
+private struct TargetProgressCanvas: View {
+    let currentWeight: Double?
+    let targetWeight: Double?
+    let targetDate: Date?
+    let referenceDate: Date
+    let calendar: Calendar
+
+    var body: some View {
+        CanvasCard(accent: .teal, secondary: .blue) {
+            VStack(alignment: .leading, spacing: 12) {
+                CanvasTitle(text: "Target Progress", accent: .teal)
+                CanvasMetricRow(label: "Target Weight", value: targetWeightText)
+                CanvasMetricRow(label: "Target Date", value: targetDateText)
+                CanvasMetricRow(label: "Difference", value: differenceText, valueColor: differenceColor)
+                CanvasMetricRow(label: "Days remaining", value: daysRemainingText, valueColor: daysRemainingColor)
+                CanvasMetricRow(
+                    label: "Weekly reduction required",
+                    value: weeklyReductionText,
+                    valueColor: weeklyReductionColor
+                )
+            }
+        }
+    }
+
+    private var targetWeightText: String {
+        guard let targetWeight else { return "--" }
+        return "\(targetWeight.cleanNumber) kg"
+    }
+
+    private var targetDateText: String {
+        targetDate.map { $0.formatted(.dateTime.month(.abbreviated).day().year()) } ?? "--"
+    }
+
+    private var difference: Double? {
+        guard let currentWeight, let targetWeight else { return nil }
+        return targetWeight - currentWeight
+    }
+
+    private var differenceText: String {
+        guard let difference else { return "--" }
+        if difference > 0 {
+            return "+\(difference.cleanNumber) kg"
+        }
+        if difference < 0 {
+            return "\(difference.cleanNumber) kg"
+        }
+        return "0 kg"
+    }
+
+    private var differenceColor: Color {
+        guard let difference else { return .secondary }
+        if difference < 0 { return .green }
+        if difference > 0 { return .orange }
+        return .secondary
+    }
+
+    private var daysRemaining: Int? {
+        guard let targetDate else { return nil }
+        let start = calendar.startOfDay(for: referenceDate)
+        let target = calendar.startOfDay(for: targetDate)
+        let delta = calendar.dateComponents([.day], from: start, to: target).day
+        guard let delta else { return nil }
+        return max(0, delta)
+    }
+
+    private var daysRemainingText: String {
+        guard let daysRemaining else { return "--" }
+        if daysRemaining == 1 {
+            return "1 day"
+        }
+        return "\(daysRemaining) days"
+    }
+
+    private var daysRemainingColor: Color {
+        guard let daysRemaining else { return .secondary }
+        if daysRemaining == 0 { return .red }
+        if daysRemaining <= 14 { return .orange }
+        return .primary
+    }
+
+    private var weeklyReduction: Double? {
+        guard let difference, let daysRemaining, daysRemaining > 0 else { return nil }
+        let weeks = Double(daysRemaining) / 7.0
+        guard weeks > 0 else { return nil }
+        return difference / weeks
+    }
+
+    private var weeklyReductionText: String {
+        guard let weeklyReduction else { return "--" }
+        let sign = weeklyReduction > 0 ? "+" : ""
+        return "\(sign)\(weeklyReduction.cleanNumber) kg/wk"
+    }
+
+    private var weeklyReductionColor: Color {
+        guard let weeklyReduction else { return .secondary }
+        if weeklyReduction < 0 { return .green }
+        if weeklyReduction > 0 { return .orange }
+        return .secondary
     }
 }
 
@@ -247,6 +460,7 @@ private struct BodyMetricLatestValues {
     let bodyFatPercent: Double?
     let waistCm: Double?
     let steps: Double?
+    let activeEnergyKcal: Double?
 }
 
 private struct BodyMetricAveragesCard: View {
@@ -259,12 +473,14 @@ private struct BodyMetricAveragesCard: View {
         let bodyFatDisplay = MetricDisplay(average: averages.bodyFatPercent, latest: latestValues.bodyFatPercent)
         let waistDisplay = MetricDisplay(average: averages.waistCm, latest: latestValues.waistCm)
         let stepsDisplay = MetricDisplay(average: averages.steps, latest: latestValues.steps)
+        let activeEnergyDisplay = MetricDisplay(average: averages.activeEnergyKcal, latest: latestValues.activeEnergyKcal)
         let fallbackTitles = [
             weightDisplay.fallbackTitle(label: "Weight"),
             leanMassDisplay.fallbackTitle(label: "Lean Mass"),
             bodyFatDisplay.fallbackTitle(label: "Body Fat"),
             waistDisplay.fallbackTitle(label: "Waist"),
-            stepsDisplay.fallbackTitle(label: "Steps")
+            stepsDisplay.fallbackTitle(label: "Steps"),
+            activeEnergyDisplay.fallbackTitle(label: "Active Energy")
         ].compactMap { $0 }
 
         VStack(alignment: .leading, spacing: 8) {
@@ -278,7 +494,10 @@ private struct BodyMetricAveragesCard: View {
                 MetricChip(title: "Body Fat", value: bodyFatDisplay.value, unit: "%", note: bodyFatDisplay.note)
                 MetricChip(title: "Waist", value: waistDisplay.value, unit: "cm", note: waistDisplay.note)
             }
-            MetricChip(title: "Steps", value: stepsDisplay.value, unit: "steps", note: stepsDisplay.note)
+            HStack(spacing: 12) {
+                MetricChip(title: "Steps", value: stepsDisplay.value, unit: "steps", note: stepsDisplay.note)
+                MetricChip(title: "Active Energy", value: activeEnergyDisplay.value, unit: "kcal", note: activeEnergyDisplay.note)
+            }
             if !fallbackTitles.isEmpty {
                 Text("No 7-day average for \(fallbackTitles.joined(separator: ", ")). Showing latest value.")
                     .font(.caption2)
@@ -319,7 +538,7 @@ private struct AppleHealthSyncCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Text("Syncs weight and steps from Apple Health (plus any available body measurements).")
+                Text("Syncs weight, steps, and active energy (Move kcal) from Apple Health (plus any available body measurements).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -353,6 +572,7 @@ private struct BodyMetricHistorySection: View {
     let bodyFatPoints: [MetricPoint]
     let waistPoints: [MetricPoint]
     let stepsPoints: [MetricPoint]
+    let activeEnergyPoints: [MetricPoint]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -364,6 +584,7 @@ private struct BodyMetricHistorySection: View {
             BodyMetricChartCard(title: "Body Fat", unit: "%", points: bodyFatPoints, tint: .orange, clampsToZero: true)
             BodyMetricChartCard(title: "Waist", unit: "cm", points: waistPoints, tint: .red, clampsToZero: true)
             BodyMetricChartCard(title: "Steps", unit: "steps", points: stepsPoints, tint: .green, clampsToZero: true)
+            BodyMetricChartCard(title: "Active Energy", unit: "kcal", points: activeEnergyPoints, tint: .pink, clampsToZero: true)
         }
     }
 }
@@ -536,7 +757,7 @@ private struct BodyMetricChartCard: View {
     }
 
     private func formattedValue(_ value: Double) -> String {
-        if unit == "steps" {
+        if unit == "steps" || unit == "kcal" {
             return "\(Int(value.rounded()))"
         }
         return value.cleanNumber
@@ -632,7 +853,10 @@ private struct BodyMetricRow: View {
                 BodyMetricValue(label: "Body Fat", value: entry.bodyFatPercent, unit: "%")
                 BodyMetricValue(label: "Waist", value: entry.waistCm, unit: "cm")
             }
-            BodyMetricValue(label: "Steps", value: entry.steps, unit: "steps")
+            HStack(spacing: 12) {
+                BodyMetricValue(label: "Steps", value: entry.steps, unit: "steps")
+                BodyMetricValue(label: "Active Energy", value: entry.activeEnergyKcal, unit: "kcal")
+            }
         }
         .padding(12)
         .background(
@@ -669,6 +893,7 @@ private struct BodyMetricEntrySheet: View {
     @State private var bodyFat = ""
     @State private var waist = ""
     @State private var steps = ""
+    @State private var activeEnergy = ""
 
     var body: some View {
         NavigationStack {
@@ -679,6 +904,7 @@ private struct BodyMetricEntrySheet: View {
                 MetricField(title: "Body Fat (%)", value: $bodyFat)
                 MetricField(title: "Waist (cm)", value: $waist)
                 MetricField(title: "Steps", value: $steps)
+                MetricField(title: "Active Energy (kcal)", value: $activeEnergy)
             }
             .navigationTitle("Add Metrics")
             .toolbar {
@@ -694,7 +920,8 @@ private struct BodyMetricEntrySheet: View {
                                 muscleMass: Double(muscleMass),
                                 bodyFatPercent: Double(bodyFat),
                                 waistCm: Double(waist),
-                                steps: Double(steps)
+                                steps: Double(steps),
+                                activeEnergyKcal: Double(activeEnergy)
                             )
                         )
                         dismiss()

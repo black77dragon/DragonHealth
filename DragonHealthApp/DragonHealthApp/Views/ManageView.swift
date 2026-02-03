@@ -40,6 +40,12 @@ struct ManageView: View {
                 }
 
                 NavigationLink {
+                    ScoringSettingsView()
+                } label: {
+                    Label("Scoring", systemImage: "speedometer")
+                }
+
+                NavigationLink {
                     UnitsView()
                 } label: {
                     Label("Units", systemImage: "ruler")
@@ -166,6 +172,15 @@ struct ProfileDetailsView: View {
                 .onChange(of: targetWeightText) { _, newValue in
                     updateTargetWeight(newValue)
                 }
+
+                DatePicker("Target Weight Date", selection: targetDateBinding, displayedComponents: .date)
+                if store.settings.targetWeightDate != nil {
+                    Button("Clear Target Date") {
+                        updateSettingsValue { $0.targetWeightDate = nil }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
             }
 
             Section("Motivation") {
@@ -203,6 +218,16 @@ struct ProfileDetailsView: View {
         targetWeightText = settings.targetWeightKg.map { $0.cleanNumber } ?? ""
         motivation = settings.motivation ?? ""
         profileImage = loadProfileImage(from: settings.profileImagePath)
+    }
+
+    private var targetDateBinding: Binding<Date> {
+        Binding(
+            get: { store.settings.targetWeightDate ?? store.currentDay },
+            set: { newValue in
+                let normalized = store.appCalendar.startOfDay(for: newValue)
+                updateSettingsValue { $0.targetWeightDate = normalized }
+            }
+        )
     }
 
     private func normalizedText(_ value: String) -> String? {
@@ -681,7 +706,7 @@ struct HealthSyncSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("Syncs weight, body fat, lean mass, waist, and steps.")
+                    Text("Syncs weight, body fat, lean mass, waist, steps, and active energy (Move kcal).")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

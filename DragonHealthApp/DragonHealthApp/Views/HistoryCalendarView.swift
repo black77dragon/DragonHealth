@@ -3,8 +3,7 @@ import UIKit
 import Core
 
 enum HistoryDayIndicator: Hashable {
-    case onTarget
-    case offTarget
+    case score(Double)
 }
 
 struct HistoryCalendarView: UIViewRepresentable {
@@ -85,10 +84,9 @@ struct HistoryCalendarView: UIViewRepresentable {
             let dayKey = DayBoundary(cutoffMinutes: 0).dayKey(for: date, calendar: calendar)
             guard let indicator = indicators[dayKey] else { return nil }
             switch indicator {
-            case .onTarget:
-                return .default(color: .systemGreen)
-            case .offTarget:
-                return .default(color: .systemRed)
+            case .score(let score):
+                let color = UIColor(ScoreColor.color(for: score))
+                return .default(color: color)
             }
         }
 

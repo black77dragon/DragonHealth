@@ -109,6 +109,15 @@ struct MoreView: View {
                     updateTargetWeight(newValue)
                 }
 
+                DatePicker("Target Weight Date", selection: targetDateBinding, displayedComponents: .date)
+                if store.settings.targetWeightDate != nil {
+                    Button("Clear Target Date") {
+                        updateSettingsValue { $0.targetWeightDate = nil }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
                 TextField("Doctor Name", text: $doctorName)
                     .textInputAutocapitalization(.words)
                     .onChange(of: doctorName) { _, newValue in
@@ -224,6 +233,16 @@ struct MoreView: View {
         nutritionistName = settings.nutritionistName ?? ""
         motivation = settings.motivation ?? ""
         profileImage = loadProfileImage(from: settings.profileImagePath)
+    }
+
+    private var targetDateBinding: Binding<Date> {
+        Binding(
+            get: { store.settings.targetWeightDate ?? store.currentDay },
+            set: { newValue in
+                let normalized = store.appCalendar.startOfDay(for: newValue)
+                updateSettingsValue { $0.targetWeightDate = normalized }
+            }
+        )
     }
 
     private var appVersionText: String {

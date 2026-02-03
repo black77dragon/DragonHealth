@@ -120,7 +120,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("Syncs weight, body fat, lean mass, waist, and steps.")
+                    Text("Syncs weight, body fat, lean mass, waist, steps, and active energy (Move kcal).")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

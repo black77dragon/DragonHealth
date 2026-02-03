@@ -34,4 +34,12 @@ public protocol DBGateway: Sendable {
     func fetchDocuments() async throws -> [Core.HealthDocument]
     func upsertDocument(_ document: Core.HealthDocument) async throws
     func deleteDocument(id: UUID) async throws
+
+    func fetchScoreProfiles() async throws -> [UUID: Core.ScoreProfile]
+    func upsertScoreProfile(categoryID: UUID, profile: Core.ScoreProfile) async throws
+    func deleteScoreProfile(categoryID: UUID) async throws
+
+    func fetchCompensationRules() async throws -> [Core.CompensationRule]
+    func upsertCompensationRule(_ rule: Core.CompensationRule) async throws
+    func deleteCompensationRule(_ rule: Core.CompensationRule) async throws
 }

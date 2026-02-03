@@ -6,19 +6,22 @@ public struct BodyMetricAverages: Hashable, Sendable {
     public let bodyFatPercent: Double?
     public let waistCm: Double?
     public let steps: Double?
+    public let activeEnergyKcal: Double?
 
     public init(
         weightKg: Double?,
         muscleMass: Double?,
         bodyFatPercent: Double?,
         waistCm: Double?,
-        steps: Double?
+        steps: Double?,
+        activeEnergyKcal: Double?
     ) {
         self.weightKg = weightKg
         self.muscleMass = muscleMass
         self.bodyFatPercent = bodyFatPercent
         self.waistCm = waistCm
         self.steps = steps
+        self.activeEnergyKcal = activeEnergyKcal
     }
 }
 
@@ -34,7 +37,8 @@ public struct BodyTrendCalculator: Sendable {
             muscleMass: average(recent.compactMap(\.muscleMass)),
             bodyFatPercent: average(recent.compactMap(\.bodyFatPercent)),
             waistCm: average(recent.compactMap(\.waistCm)),
-            steps: average(recent.compactMap(\.steps))
+            steps: average(recent.compactMap(\.steps)),
+            activeEnergyKcal: average(recent.compactMap(\.activeEnergyKcal))
         )
     }
 
