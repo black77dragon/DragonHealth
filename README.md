@@ -44,7 +44,7 @@ Food photo search uses the Unsplash API. Set the access key in `DragonHealthApp/
 
 The product specification is the source of truth for requirements and implementation decisions. It is stored as versioned Markdown in `Docs/specs/` so it can be reviewed, diffed, and referenced alongside the codebase.
 
-- Current spec: `Docs/specs/dragonhealth-ios-spec-v0.3.md`
+- Current spec: `Docs/specs/dragonhealth-ios-spec-v1.5.md`
 
 ## Repository Structure
 

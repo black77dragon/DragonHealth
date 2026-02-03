@@ -104,6 +104,7 @@ struct LibraryView: View {
     private func foodRow(for item: FoodItem) -> some View {
         FoodItemRow(item: item, categoryName: categoryName(for: item.categoryID), unitSymbol: unitSymbol(for: item.unitID))
             .contentShape(Rectangle())
+            .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
             .onTapGesture {
                 editingItem = item
             }
@@ -123,35 +124,34 @@ struct FoodItemRow: View {
     let categoryName: String
     var unitSymbol: String? = nil
     var showsFavorite: Bool = true
-    var thumbnailSize: CGFloat = 44
-    var verticalPadding: CGFloat = 4
+    var thumbnailSize: CGFloat = 36
+    var verticalPadding: CGFloat = 2
     @State private var showingPhotoCredit = false
 
     var body: some View {
         let detailText = detailLine()
-        HStack(spacing: 12) {
+        let showsUnsplashCredit = item.foodImageAttribution?.source == .unsplash
+        HStack(spacing: 8) {
             FoodThumbnailView(imagePath: item.imagePath, remoteURL: item.imageRemoteURL, size: thumbnailSize)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
-                    .font(.subheadline)
+                    .font(.callout)
                 Text(detailText)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
-                if let attribution = item.foodImageAttribution {
-                    FoodInlineAttributionView(attribution: attribution)
-                }
+                    .lineLimit(2)
             }
             Spacer()
-            if item.foodImageAttribution != nil {
+            if showsUnsplashCredit {
                 Button {
                     showingPhotoCredit = true
                 } label: {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 16))
+                    Text("®")
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Photo credit")
+                .accessibilityLabel("Unsplash photo credit")
             }
             if showsFavorite, item.isFavorite {
                 Image(systemName: "star.fill")
@@ -167,12 +167,19 @@ struct FoodItemRow: View {
     }
 
     private func detailLine() -> String {
-        var detail = "\(categoryName) - \(item.portionEquivalent.cleanNumber) portion"
+        var parts: [String] = [
+            categoryName,
+            "\(item.portionEquivalent.cleanNumber) portion"
+        ]
         if let amountPerPortion = item.amountPerPortion,
            let unitSymbol {
-            detail += " • 1 portion = \(amountPerPortion.cleanNumber) \(unitSymbol)"
+            parts.append("1 portion = \(amountPerPortion.cleanNumber) \(unitSymbol)")
         }
-        return detail
+        if let notes = item.notes?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !notes.isEmpty {
+            parts.append("Notes: \(notes)")
+        }
+        return parts.joined(separator: " • ")
     }
 }
 
