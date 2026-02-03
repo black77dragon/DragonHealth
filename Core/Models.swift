@@ -115,6 +115,7 @@ public struct BodyMetricEntry: Hashable, Sendable {
     public let bodyFatPercent: Double?
     public let waistCm: Double?
     public let steps: Double?
+    public let activeEnergyKcal: Double?
 
     public init(
         date: Date,
@@ -122,7 +123,8 @@ public struct BodyMetricEntry: Hashable, Sendable {
         muscleMass: Double?,
         bodyFatPercent: Double?,
         waistCm: Double?,
-        steps: Double? = nil
+        steps: Double? = nil,
+        activeEnergyKcal: Double? = nil
     ) {
         self.date = date
         self.weightKg = weightKg
@@ -130,6 +132,7 @@ public struct BodyMetricEntry: Hashable, Sendable {
         self.bodyFatPercent = bodyFatPercent
         self.waistCm = waistCm
         self.steps = steps
+        self.activeEnergyKcal = activeEnergyKcal
     }
 }
 
@@ -249,6 +252,7 @@ public struct AppSettings: Hashable, Sendable {
     public var profileImagePath: String?
     public var heightCm: Double?
     public var targetWeightKg: Double?
+    public var targetWeightDate: Date?
     public var motivation: String?
     public var doctorName: String?
     public var nutritionistName: String?
@@ -261,6 +265,7 @@ public struct AppSettings: Hashable, Sendable {
         profileImagePath: String? = nil,
         heightCm: Double? = nil,
         targetWeightKg: Double? = nil,
+        targetWeightDate: Date? = nil,
         motivation: String? = nil,
         doctorName: String? = nil,
         nutritionistName: String? = nil,
@@ -272,6 +277,7 @@ public struct AppSettings: Hashable, Sendable {
         self.profileImagePath = profileImagePath
         self.heightCm = heightCm
         self.targetWeightKg = targetWeightKg
+        self.targetWeightDate = targetWeightDate
         self.motivation = motivation
         self.doctorName = doctorName
         self.nutritionistName = nutritionistName

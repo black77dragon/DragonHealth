@@ -19,6 +19,8 @@ final class AppStore: ObservableObject {
     @Published private(set) var bodyMetrics: [Core.BodyMetricEntry] = []
     @Published private(set) var careMeetings: [Core.CareMeeting] = []
     @Published private(set) var documents: [Core.HealthDocument] = []
+    @Published private(set) var scoreProfiles: [UUID: Core.ScoreProfile] = [:]
+    @Published private(set) var compensationRules: [Core.CompensationRule] = []
     @Published private(set) var settings: Core.AppSettings = .defaultValue
     @Published var refreshToken = UUID()
 
@@ -140,6 +142,17 @@ final class AppStore: ObservableObject {
             let loadedMetrics = try await db.fetchBodyMetrics()
             let loadedMeetings = try await db.fetchCareMeetings()
             let loadedDocuments = try await db.fetchDocuments()
+            let loadedScoreProfiles = try await db.fetchScoreProfiles()
+            var loadedCompensationRules = try await db.fetchCompensationRules()
+            if loadedCompensationRules.isEmpty {
+                let defaults = Core.CompensationRule.defaultRules(for: loadedCategories)
+                if !defaults.isEmpty {
+                    for rule in defaults {
+                        try await db.upsertCompensationRule(rule)
+                    }
+                    loadedCompensationRules = try await db.fetchCompensationRules()
+                }
+            }
 
             categories = loadedCategories.sorted(by: { $0.sortOrder < $1.sortOrder })
             units = loadedUnits.sorted(by: { $0.sortOrder < $1.sortOrder })
@@ -149,6 +162,9 @@ final class AppStore: ObservableObject {
             bodyMetrics = loadedMetrics.sorted(by: { $0.date > $1.date })
             careMeetings = loadedMeetings.sorted(by: { $0.date > $1.date })
             documents = loadedDocuments.sorted(by: { $0.createdAt > $1.createdAt })
+            let categoryIDs = Set(categories.map(\.id))
+            scoreProfiles = loadedScoreProfiles.filter { categoryIDs.contains($0.key) }
+            compensationRules = loadedCompensationRules.filter { categoryIDs.contains($0.fromCategoryID) && categoryIDs.contains($0.toCategoryID) }
 
             let foodImagePaths = loadedFoodItems.compactMap(\.imagePath)
             if !foodImagePaths.isEmpty {
@@ -187,6 +203,50 @@ final class AppStore: ObservableObject {
             refreshToken = UUID()
         } catch {
             loadState = .failed("Category error: \(error.localizedDescription)")
+        }
+    }
+
+    func saveScoreProfile(categoryID: UUID, profile: Core.ScoreProfile) async {
+        guard let db else { return }
+        do {
+            try await db.upsertScoreProfile(categoryID: categoryID, profile: profile)
+            scoreProfiles = try await db.fetchScoreProfiles()
+            refreshToken = UUID()
+        } catch {
+            loadState = .failed("Scoring error: \(error.localizedDescription)")
+        }
+    }
+
+    func deleteScoreProfile(categoryID: UUID) async {
+        guard let db else { return }
+        do {
+            try await db.deleteScoreProfile(categoryID: categoryID)
+            scoreProfiles = try await db.fetchScoreProfiles()
+            refreshToken = UUID()
+        } catch {
+            loadState = .failed("Scoring error: \(error.localizedDescription)")
+        }
+    }
+
+    func saveCompensationRule(_ rule: Core.CompensationRule) async {
+        guard let db else { return }
+        do {
+            try await db.upsertCompensationRule(rule)
+            compensationRules = try await db.fetchCompensationRules()
+            refreshToken = UUID()
+        } catch {
+            loadState = .failed("Scoring error: \(error.localizedDescription)")
+        }
+    }
+
+    func deleteCompensationRule(_ rule: Core.CompensationRule) async {
+        guard let db else { return }
+        do {
+            try await db.deleteCompensationRule(rule)
+            compensationRules = try await db.fetchCompensationRules()
+            refreshToken = UUID()
+        } catch {
+            loadState = .failed("Scoring error: \(error.localizedDescription)")
         }
     }
 
@@ -321,15 +381,20 @@ final class AppStore: ObservableObject {
 
     func fetchHistoryIndicators(start: Date, end: Date) async -> [String: HistoryDayIndicator] {
         guard let db else { return [:] }
-        let evaluator = DailyTotalEvaluator()
+        let evaluator = DailyScoreEvaluator()
         let rangeStart = min(start, end)
         let rangeEnd = max(start, end)
         do {
             let totalsByDay = try await db.fetchDailyTotalsByDay(start: rangeStart, end: rangeEnd)
             var indicators: [String: HistoryDayIndicator] = [:]
             for (dayKey, totalsByCategoryID) in totalsByDay {
-                let summary = evaluator.evaluate(categories: categories, totalsByCategoryID: totalsByCategoryID)
-                indicators[dayKey] = summary.allTargetsMet ? .onTarget : .offTarget
+                let summary = evaluator.evaluate(
+                    categories: categories,
+                    totalsByCategoryID: totalsByCategoryID,
+                    profilesByCategoryID: scoreProfiles,
+                    compensationRules: compensationRules
+                )
+                indicators[dayKey] = .score(summary.overallScore)
             }
             return indicators
         } catch {

@@ -7,6 +7,7 @@ struct HistoryView: View {
     @State private var dailyLog: DailyLog?
     @State private var totals: [UUID: Double] = [:]
     @State private var adherence: DailyAdherenceSummary?
+    @State private var scoreSummary: DailyScoreSummary?
     @State private var calendarIndicators: [String: HistoryDayIndicator] = [:]
     @State private var visibleMonthDate = Date()
     @State private var showingQuickAdd = false
@@ -14,6 +15,7 @@ struct HistoryView: View {
 
     private let totalsCalculator = DailyTotalsCalculator()
     private let evaluator = DailyTotalEvaluator()
+    private let scoreEvaluator = DailyScoreEvaluator()
 
     var body: some View {
         ScrollView {
@@ -35,7 +37,7 @@ struct HistoryView: View {
                 HistoryCalendarLegend()
 
                 if let adherence {
-                    HistorySummaryCard(adherence: adherence)
+                    HistorySummaryCard(adherence: adherence, scoreSummary: scoreSummary)
                 }
 
                 if !entries.isEmpty {
@@ -85,6 +87,7 @@ struct HistoryView: View {
                 foodItems: store.foodItems,
                 units: store.units,
                 preselectedCategoryID: nil,
+                preselectedMealSlotID: nil,
                 contextDate: selectedDate,
                 onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
@@ -148,6 +151,12 @@ struct HistoryView: View {
         let entries = log?.entries ?? []
         totals = totalsCalculator.totalsByCategory(entries: entries)
         adherence = evaluator.evaluate(categories: store.categories, totalsByCategoryID: totals)
+        scoreSummary = scoreEvaluator.evaluate(
+            categories: store.categories,
+            totalsByCategoryID: totals,
+            profilesByCategoryID: store.scoreProfiles,
+            compensationRules: store.compensationRules
+        )
     }
 
     private func loadCalendarIndicators(for referenceDate: Date) async {
@@ -171,9 +180,10 @@ struct HistoryView: View {
 
 private struct HistorySummaryCard: View {
     let adherence: DailyAdherenceSummary
+    let scoreSummary: DailyScoreSummary?
 
     var body: some View {
-        HStack {
+        HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(adherence.allTargetsMet ? "On Target" : "Off Target")
                     .font(.headline)
@@ -182,9 +192,14 @@ private struct HistorySummaryCard: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Image(systemName: adherence.allTargetsMet ? "checkmark.seal.fill" : "xmark.seal")
-                .foregroundStyle(adherence.allTargetsMet ? .green : .orange)
-                .font(.title2)
+            VStack(alignment: .trailing, spacing: 8) {
+                if let scoreSummary {
+                    ScoreBadge(score: scoreSummary.overallScore)
+                }
+                Image(systemName: adherence.allTargetsMet ? "checkmark.seal.fill" : "xmark.seal")
+                    .foregroundStyle(adherence.allTargetsMet ? .green : .orange)
+                    .font(.title2)
+            }
         }
         .padding(12)
         .background(
@@ -197,8 +212,8 @@ private struct HistorySummaryCard: View {
 private struct HistoryCalendarLegend: View {
     var body: some View {
         HStack(spacing: 16) {
-            legendItem(color: .green, label: "Target met")
-            legendItem(color: .red, label: "Target missed")
+            legendItem(color: ScoreColor.color(for: 100), label: "High score")
+            legendItem(color: ScoreColor.color(for: 0), label: "Low score")
         }
         .font(.caption)
         .foregroundStyle(.secondary)

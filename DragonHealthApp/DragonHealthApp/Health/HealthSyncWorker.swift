@@ -58,6 +58,7 @@ actor HealthSyncWorker {
         var leanMassKg: Double?
         var waistCm: Double?
         var steps: Double?
+        var activeEnergyKcal: Double?
     }
 
     private let healthStore = HKHealthStore()
@@ -204,13 +205,15 @@ actor HealthSyncWorker {
             end: end
         )
         async let stepsByDay = fetchDailyStepCounts(start: start, end: end)
+        async let activeEnergyByDay = fetchDailyActiveEnergy(start: start, end: end)
 
-        let (weights, leanMass, bodyFat, waist, steps) = try await (
+        let (weights, leanMass, bodyFat, waist, steps, activeEnergy) = try await (
             weightByDay,
             leanMassByDay,
             bodyFatByDay,
             waistByDay,
-            stepsByDay
+            stepsByDay,
+            activeEnergyByDay
         )
 
         var combined: [Date: HealthDayValues] = [:]
@@ -228,6 +231,7 @@ actor HealthSyncWorker {
         merge(bodyFat) { $0.bodyFatPercent = $1 }
         merge(waist) { $0.waistCm = $1 }
         merge(steps) { $0.steps = $1 }
+        merge(activeEnergy) { $0.activeEnergyKcal = $1 }
 
         return combined
     }
@@ -253,14 +257,16 @@ actor HealthSyncWorker {
                 muscleMass: existing?.muscleMass ?? health.leanMassKg,
                 bodyFatPercent: existing?.bodyFatPercent ?? health.bodyFatPercent,
                 waistCm: existing?.waistCm ?? health.waistCm,
-                steps: existing?.steps ?? health.steps
+                steps: existing?.steps ?? health.steps,
+                activeEnergyKcal: existing?.activeEnergyKcal ?? health.activeEnergyKcal
             )
 
             if merged.weightKg == nil,
                merged.muscleMass == nil,
                merged.bodyFatPercent == nil,
                merged.waistCm == nil,
-               merged.steps == nil {
+               merged.steps == nil,
+               merged.activeEnergyKcal == nil {
                 continue
             }
 
@@ -348,13 +354,50 @@ actor HealthSyncWorker {
         }
     }
 
+    private func fetchDailyActiveEnergy(start: Date, end: Date) async throws -> [Date: Double] {
+        guard let type = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) else { return [:] }
+        return try await withCheckedThrowingContinuation { continuation in
+            let calendar = calendar
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+            let anchorDate = calendar.startOfDay(for: start)
+            let interval = DateComponents(day: 1)
+            let query = HKStatisticsCollectionQuery(
+                quantityType: type,
+                quantitySamplePredicate: predicate,
+                options: .cumulativeSum,
+                anchorDate: anchorDate,
+                intervalComponents: interval
+            )
+            query.initialResultsHandler = { _, results, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let results else {
+                    continuation.resume(returning: [:])
+                    return
+                }
+                var byDay: [Date: Double] = [:]
+                results.enumerateStatistics(from: start, to: end) { statistics, _ in
+                    if let sum = statistics.sumQuantity() {
+                        let day = calendar.startOfDay(for: statistics.startDate)
+                        byDay[day] = sum.doubleValue(for: .kilocalorie())
+                    }
+                }
+                continuation.resume(returning: byDay)
+            }
+            healthStore.execute(query)
+        }
+    }
+
     private static let readTypes: Set<HKObjectType> = {
         let identifiers: [HKQuantityTypeIdentifier] = [
             .bodyMass,
             .bodyFatPercentage,
             .leanBodyMass,
             .waistCircumference,
-            .stepCount
+            .stepCount,
+            .activeEnergyBurned
         ]
         let types = identifiers.compactMap { HKObjectType.quantityType(forIdentifier: $0) }
         return Set(types)
