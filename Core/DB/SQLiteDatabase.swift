@@ -342,7 +342,8 @@ public actor SQLiteDatabase: DBGateway {
                nutritionist_name,
                food_seed_version,
                show_launch_splash,
-               appearance_mode
+               appearance_mode,
+               meal_timing_json
         FROM app_settings
         WHERE id = 1;
         """
@@ -355,6 +356,8 @@ public actor SQLiteDatabase: DBGateway {
             let targetWeightDate = readOptionalDouble(statement, index: 4).map {
                 Date(timeIntervalSince1970: $0)
             }
+            let mealTimingJSON = readOptionalText(statement, index: 11)
+            let mealSlotTimings = decodeMealSlotTimings(from: mealTimingJSON)
             return Core.AppSettings(
                 dayCutoffMinutes: minutes,
                 profileImagePath: readOptionalText(statement, index: 1),
@@ -366,7 +369,8 @@ public actor SQLiteDatabase: DBGateway {
                 nutritionistName: readOptionalText(statement, index: 7),
                 foodSeedVersion: Int(sqlite3_column_int(statement, 8)),
                 showLaunchSplash: sqlite3_column_int(statement, 9) != 0,
-                appearance: appearance
+                appearance: appearance,
+                mealSlotTimings: mealSlotTimings
             )
         }
         return Core.AppSettings.defaultValue
@@ -386,9 +390,10 @@ public actor SQLiteDatabase: DBGateway {
             nutritionist_name,
             food_seed_version,
             show_launch_splash,
-            appearance_mode
+            appearance_mode,
+            meal_timing_json
         )
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             day_cutoff_minutes = excluded.day_cutoff_minutes,
             profile_image_path = excluded.profile_image_path,
@@ -400,7 +405,8 @@ public actor SQLiteDatabase: DBGateway {
             nutritionist_name = excluded.nutritionist_name,
             food_seed_version = excluded.food_seed_version,
             show_launch_splash = excluded.show_launch_splash,
-            appearance_mode = excluded.appearance_mode;
+            appearance_mode = excluded.appearance_mode,
+            meal_timing_json = excluded.meal_timing_json;
         """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -415,12 +421,14 @@ public actor SQLiteDatabase: DBGateway {
         bindInt(statement, index: 9, value: settings.foodSeedVersion)
         bindInt(statement, index: 10, value: settings.showLaunchSplash ? 1 : 0)
         bindText(statement, index: 11, value: settings.appearance.rawValue)
+        bindText(statement, index: 12, value: encodeMealSlotTimings(settings.mealSlotTimings))
         try step(statement)
     }
 
     public func fetchFoodItems() async throws -> [Core.FoodItem] {
         let sql = """
-        SELECT id, name, category_id, portion, amount_per_portion, unit_id, notes, is_favorite, image_path
+        SELECT id, name, category_id, portion, amount_per_portion, unit_id, notes, is_favorite, image_path,
+               image_remote_url, image_source, image_source_id, image_attribution_name, image_attribution_url, image_source_url
         FROM food_items
         ORDER BY is_favorite DESC, name ASC;
         """
@@ -437,6 +445,12 @@ public actor SQLiteDatabase: DBGateway {
             let notes = readOptionalText(statement, index: 6)
             let isFavorite = readBool(statement, index: 7)
             let imagePath = readOptionalText(statement, index: 8)
+            let imageRemoteURL = readOptionalText(statement, index: 9)
+            let imageSource = readOptionalText(statement, index: 10).flatMap(Core.FoodImageSource.init(rawValue:))
+            let imageSourceID = readOptionalText(statement, index: 11)
+            let imageAttributionName = readOptionalText(statement, index: 12)
+            let imageAttributionURL = readOptionalText(statement, index: 13)
+            let imageSourceURL = readOptionalText(statement, index: 14)
             items.append(
                 Core.FoodItem(
                     id: id,
@@ -447,7 +461,13 @@ public actor SQLiteDatabase: DBGateway {
                     unitID: unitID,
                     notes: notes,
                     isFavorite: isFavorite,
-                    imagePath: imagePath
+                    imagePath: imagePath,
+                    imageRemoteURL: imageRemoteURL,
+                    imageSource: imageSource,
+                    imageSourceID: imageSourceID,
+                    imageAttributionName: imageAttributionName,
+                    imageAttributionURL: imageAttributionURL,
+                    imageSourceURL: imageSourceURL
                 )
             )
         }
@@ -456,8 +476,9 @@ public actor SQLiteDatabase: DBGateway {
 
     public func upsertFoodItem(_ item: Core.FoodItem) async throws {
         let sql = """
-        INSERT INTO food_items (id, name, category_id, portion, amount_per_portion, unit_id, notes, is_favorite, image_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO food_items (id, name, category_id, portion, amount_per_portion, unit_id, notes, is_favorite, image_path,
+                                image_remote_url, image_source, image_source_id, image_attribution_name, image_attribution_url, image_source_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             category_id = excluded.category_id,
@@ -466,7 +487,13 @@ public actor SQLiteDatabase: DBGateway {
             unit_id = excluded.unit_id,
             notes = excluded.notes,
             is_favorite = excluded.is_favorite,
-            image_path = excluded.image_path;
+            image_path = excluded.image_path,
+            image_remote_url = excluded.image_remote_url,
+            image_source = excluded.image_source,
+            image_source_id = excluded.image_source_id,
+            image_attribution_name = excluded.image_attribution_name,
+            image_attribution_url = excluded.image_attribution_url,
+            image_source_url = excluded.image_source_url;
         """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -479,6 +506,12 @@ public actor SQLiteDatabase: DBGateway {
         bindOptionalText(statement, index: 7, value: item.notes)
         bindBool(statement, index: 8, value: item.isFavorite)
         bindOptionalText(statement, index: 9, value: item.imagePath)
+        bindOptionalText(statement, index: 10, value: item.imageRemoteURL)
+        bindOptionalText(statement, index: 11, value: item.imageSource?.rawValue)
+        bindOptionalText(statement, index: 12, value: item.imageSourceID)
+        bindOptionalText(statement, index: 13, value: item.imageAttributionName)
+        bindOptionalText(statement, index: 14, value: item.imageAttributionURL)
+        bindOptionalText(statement, index: 15, value: item.imageSourceURL)
         try step(statement)
     }
 
@@ -837,7 +870,13 @@ public actor SQLiteDatabase: DBGateway {
             unit_id TEXT,
             notes TEXT,
             is_favorite INTEGER NOT NULL,
-            image_path TEXT
+            image_path TEXT,
+            image_remote_url TEXT,
+            image_source TEXT,
+            image_source_id TEXT,
+            image_attribution_name TEXT,
+            image_attribution_url TEXT,
+            image_source_url TEXT
         );
         """, db: db)
 
@@ -875,7 +914,8 @@ public actor SQLiteDatabase: DBGateway {
             nutritionist_name TEXT,
             food_seed_version INTEGER NOT NULL DEFAULT 0,
             show_launch_splash INTEGER NOT NULL DEFAULT 1,
-            appearance_mode TEXT NOT NULL DEFAULT 'system'
+            appearance_mode TEXT NOT NULL DEFAULT 'system',
+            meal_timing_json TEXT NOT NULL DEFAULT '[]'
         );
         """, db: db)
 
@@ -972,7 +1012,13 @@ public actor SQLiteDatabase: DBGateway {
                 "unit_id": "TEXT",
                 "notes": "TEXT",
                 "is_favorite": "INTEGER NOT NULL DEFAULT 0",
-                "image_path": "TEXT"
+                "image_path": "TEXT",
+                "image_remote_url": "TEXT",
+                "image_source": "TEXT",
+                "image_source_id": "TEXT",
+                "image_attribution_name": "TEXT",
+                "image_attribution_url": "TEXT",
+                "image_source_url": "TEXT"
             ],
             db: db
         )
@@ -1003,7 +1049,8 @@ public actor SQLiteDatabase: DBGateway {
                 "nutritionist_name": "TEXT",
                 "food_seed_version": "INTEGER NOT NULL DEFAULT 0",
                 "show_launch_splash": "INTEGER NOT NULL DEFAULT 1",
-                "appearance_mode": "TEXT NOT NULL DEFAULT 'system'"
+                "appearance_mode": "TEXT NOT NULL DEFAULT 'system'",
+                "meal_timing_json": "TEXT NOT NULL DEFAULT '[]'"
             ],
             db: db
         )
@@ -1211,6 +1258,22 @@ public actor SQLiteDatabase: DBGateway {
         default:
             return .exact(min ?? max ?? 0)
         }
+    }
+
+    private func encodeMealSlotTimings(_ timings: [Core.MealSlotTiming]) -> String {
+        guard !timings.isEmpty else { return "[]" }
+        do {
+            let data = try JSONEncoder().encode(timings)
+            return String(data: data, encoding: .utf8) ?? "[]"
+        } catch {
+            return "[]"
+        }
+    }
+
+    private func decodeMealSlotTimings(from json: String?) -> [Core.MealSlotTiming] {
+        guard let json, !json.isEmpty else { return [] }
+        guard let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([Core.MealSlotTiming].self, from: data)) ?? []
     }
 
 }

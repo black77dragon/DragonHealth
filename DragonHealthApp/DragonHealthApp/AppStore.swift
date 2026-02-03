@@ -52,6 +52,36 @@ final class AppStore: ObservableObject {
         dayBoundary.dayStart(for: Date(), calendar: calendar)
     }
 
+    func currentMealSlotID(for date: Date = Date()) -> UUID? {
+        let timings = resolvedMealSlotTimings().filter(\.includeInAuto)
+        guard !timings.isEmpty else { return mealSlots.first?.id }
+        if timings.count == 1 {
+            return timings[0].slotID
+        }
+        let minute = minuteOfDay(for: date)
+        for index in 0..<(timings.count - 1) {
+            let start = timings[index].startMinutes
+            let end = timings[index + 1].startMinutes
+            if minute >= start && minute < end {
+                return timings[index].slotID
+            }
+        }
+        if let last = timings.last {
+            if minute >= last.startMinutes || minute < timings[0].startMinutes {
+                return last.slotID
+            }
+        }
+        return mealSlots.first?.id
+    }
+
+    func resolvedMealSlotTimings() -> [Core.MealSlotTiming] {
+        Self.resolvedMealSlotTimings(mealSlots: mealSlots, settings: settings)
+    }
+
+    func defaultMealSlotTimings() -> [Core.MealSlotTiming] {
+        Self.defaultMealSlotTimings(mealSlots: mealSlots, dayCutoffMinutes: settings.dayCutoffMinutes)
+    }
+
     private func normalizedDay(for date: Date) -> Date {
         normalizedDay(for: date, treatStartOfDayAsDayOnly: false)
     }
@@ -74,6 +104,11 @@ final class AppStore: ObservableObject {
     private func normalizedNotes(_ notes: String?) -> String? {
         let trimmed = notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func minuteOfDay(for date: Date) -> Int {
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
     }
 
     func loadAll() async {
@@ -105,7 +140,13 @@ final class AppStore: ObservableObject {
             }
 
             var loadedSettings = try await db.fetchSettings()
-            try await db.updateSettings(loadedSettings)
+            let resolvedTimings = Self.resolvedMealSlotTimings(mealSlots: loadedMealSlots, settings: loadedSettings)
+            if resolvedTimings != loadedSettings.mealSlotTimings {
+                loadedSettings.mealSlotTimings = resolvedTimings
+                try await db.updateSettings(loadedSettings)
+            } else {
+                try await db.updateSettings(loadedSettings)
+            }
 
             var loadedFoodItems = try await db.fetchFoodItems()
             var didSeedFoodItems = false
@@ -501,6 +542,109 @@ final class AppStore: ObservableObject {
         } catch {
             loadState = .failed("Log error: \(error.localizedDescription)")
         }
+    }
+
+    private static func resolvedMealSlotTimings(
+        mealSlots: [Core.MealSlot],
+        settings: Core.AppSettings
+    ) -> [Core.MealSlotTiming] {
+        let orderedSlots = mealSlots.sorted(by: { $0.sortOrder < $1.sortOrder })
+        guard !orderedSlots.isEmpty else { return [] }
+
+        let sanitizedStored = settings.mealSlotTimings
+            .filter { (0..<1440).contains($0.startMinutes) }
+            .reduce(into: [UUID: Core.MealSlotTiming]()) { partialResult, timing in
+                partialResult[timing.slotID] = timing
+            }
+
+        let defaults = defaultMealSlotTimings(mealSlots: orderedSlots, dayCutoffMinutes: settings.dayCutoffMinutes)
+        let defaultByID = Dictionary(uniqueKeysWithValues: defaults.map { ($0.slotID, $0.startMinutes) })
+
+        var resolved: [Core.MealSlotTiming] = []
+
+        for slot in orderedSlots {
+            let stored = sanitizedStored[slot.id]
+            let include = stored?.includeInAuto ?? true
+            var start = stored?.startMinutes ?? defaultByID[slot.id] ?? 0
+            start = min(max(start, 0), 1439)
+            resolved.append(Core.MealSlotTiming(slotID: slot.id, startMinutes: start, includeInAuto: include))
+        }
+
+        var lastIncludedStart: Int? = nil
+        for index in resolved.indices {
+            guard resolved[index].includeInAuto else { continue }
+            if let lastIncludedStart, resolved[index].startMinutes <= lastIncludedStart {
+                resolved[index].startMinutes = min(lastIncludedStart + 1, 1439)
+            }
+            lastIncludedStart = resolved[index].startMinutes
+        }
+        return resolved
+    }
+
+    private static func defaultMealSlotTimings(
+        mealSlots: [Core.MealSlot],
+        dayCutoffMinutes: Int
+    ) -> [Core.MealSlotTiming] {
+        let orderedSlots = mealSlots.sorted(by: { $0.sortOrder < $1.sortOrder })
+        guard !orderedSlots.isEmpty else { return [] }
+
+        var inferred: [Core.MealSlotTiming] = []
+        var allInferred = true
+        for slot in orderedSlots {
+            if let start = inferredStartMinutes(for: slot, dayCutoffMinutes: dayCutoffMinutes) {
+                inferred.append(Core.MealSlotTiming(slotID: slot.id, startMinutes: start, includeInAuto: true))
+            } else {
+                allInferred = false
+                break
+            }
+        }
+
+        if allInferred, isStrictlyIncreasing(inferred.map(\.startMinutes)) {
+            return inferred
+        }
+
+        let step = max(1, 1440 / orderedSlots.count)
+        return orderedSlots.enumerated().map { index, slot in
+            let start = min(1439, index * step)
+            return Core.MealSlotTiming(slotID: slot.id, startMinutes: start, includeInAuto: true)
+        }
+    }
+
+    private static func inferredStartMinutes(
+        for slot: Core.MealSlot,
+        dayCutoffMinutes: Int
+    ) -> Int? {
+        let name = slot.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if name.contains("breakfast") {
+            return min(max(dayCutoffMinutes, 0), 1439)
+        }
+        if name.contains("morning") && name.contains("snack") {
+            return 8 * 60
+        }
+        if name.contains("lunch") {
+            return 12 * 60
+        }
+        if name.contains("afternoon") && name.contains("snack") {
+            return 14 * 60
+        }
+        if name.contains("dinner") {
+            return 18 * 60
+        }
+        if name.contains("late") && name.contains("night") {
+            return 20 * 60
+        }
+        if name.contains("midnight") {
+            return 23 * 60
+        }
+        return nil
+    }
+
+    private static func isStrictlyIncreasing(_ values: [Int]) -> Bool {
+        guard values.count > 1 else { return true }
+        for index in 1..<values.count where values[index] <= values[index - 1] {
+            return false
+        }
+        return true
     }
 
     nonisolated static func databaseURL() -> URL {

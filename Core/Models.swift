@@ -62,6 +62,31 @@ public struct MealSlot: Identifiable, Hashable, Sendable {
     }
 }
 
+public struct MealSlotTiming: Codable, Hashable, Sendable {
+    public let slotID: UUID
+    public var startMinutes: Int
+    public var includeInAuto: Bool
+
+    public init(slotID: UUID, startMinutes: Int, includeInAuto: Bool = true) {
+        self.slotID = slotID
+        self.startMinutes = startMinutes
+        self.includeInAuto = includeInAuto
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case slotID
+        case startMinutes
+        case includeInAuto
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        slotID = try container.decode(UUID.self, forKey: .slotID)
+        startMinutes = try container.decode(Int.self, forKey: .startMinutes)
+        includeInAuto = try container.decodeIfPresent(Bool.self, forKey: .includeInAuto) ?? true
+    }
+}
+
 public struct DailyLogEntry: Identifiable, Hashable, Sendable {
     public let id: UUID
     public let date: Date
@@ -169,6 +194,10 @@ public struct CareMeeting: Identifiable, Hashable, Sendable {
     }
 }
 
+public enum FoodImageSource: String, Hashable, Sendable {
+    case unsplash
+}
+
 public struct FoodItem: Identifiable, Hashable, Sendable {
     public let id: UUID
     public var name: String
@@ -179,6 +208,12 @@ public struct FoodItem: Identifiable, Hashable, Sendable {
     public var notes: String?
     public var isFavorite: Bool
     public var imagePath: String?
+    public var imageRemoteURL: String?
+    public var imageSource: FoodImageSource?
+    public var imageSourceID: String?
+    public var imageAttributionName: String?
+    public var imageAttributionURL: String?
+    public var imageSourceURL: String?
 
     public init(
         id: UUID = UUID(),
@@ -189,7 +224,13 @@ public struct FoodItem: Identifiable, Hashable, Sendable {
         unitID: UUID? = nil,
         notes: String? = nil,
         isFavorite: Bool = false,
-        imagePath: String? = nil
+        imagePath: String? = nil,
+        imageRemoteURL: String? = nil,
+        imageSource: FoodImageSource? = nil,
+        imageSourceID: String? = nil,
+        imageAttributionName: String? = nil,
+        imageAttributionURL: String? = nil,
+        imageSourceURL: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -200,6 +241,12 @@ public struct FoodItem: Identifiable, Hashable, Sendable {
         self.notes = notes
         self.isFavorite = isFavorite
         self.imagePath = imagePath
+        self.imageRemoteURL = imageRemoteURL
+        self.imageSource = imageSource
+        self.imageSourceID = imageSourceID
+        self.imageAttributionName = imageAttributionName
+        self.imageAttributionURL = imageAttributionURL
+        self.imageSourceURL = imageSourceURL
     }
 }
 
@@ -259,6 +306,7 @@ public struct AppSettings: Hashable, Sendable {
     public var foodSeedVersion: Int
     public var showLaunchSplash: Bool
     public var appearance: AppAppearance
+    public var mealSlotTimings: [MealSlotTiming]
 
     public init(
         dayCutoffMinutes: Int,
@@ -271,7 +319,8 @@ public struct AppSettings: Hashable, Sendable {
         nutritionistName: String? = nil,
         foodSeedVersion: Int = 0,
         showLaunchSplash: Bool = true,
-        appearance: AppAppearance = .system
+        appearance: AppAppearance = .system,
+        mealSlotTimings: [MealSlotTiming] = []
     ) {
         self.dayCutoffMinutes = dayCutoffMinutes
         self.profileImagePath = profileImagePath
@@ -284,6 +333,7 @@ public struct AppSettings: Hashable, Sendable {
         self.foodSeedVersion = foodSeedVersion
         self.showLaunchSplash = showLaunchSplash
         self.appearance = appearance
+        self.mealSlotTimings = mealSlotTimings
     }
 
     public static let defaultValue = AppSettings(dayCutoffMinutes: 4 * 60, showLaunchSplash: true)

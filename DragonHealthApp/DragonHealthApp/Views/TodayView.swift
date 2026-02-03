@@ -138,7 +138,7 @@ struct TodayView: View {
                 foodItems: store.foodItems,
                 units: store.units,
                 preselectedCategoryID: nil,
-                preselectedMealSlotID: nil,
+                preselectedMealSlotID: store.currentMealSlotID(),
                 contextDate: nil,
                 style: quickAddStyle,
                 onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
@@ -476,7 +476,7 @@ private struct CategoryDayDetailView: View {
                 foodItems: store.foodItems,
                 units: store.units,
                 preselectedCategoryID: category.id,
-                preselectedMealSlotID: nil,
+                preselectedMealSlotID: store.currentMealSlotID(),
                 contextDate: nil,
                 style: quickAddStyle,
                 onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
@@ -2095,7 +2095,26 @@ private struct FoodLibraryPicker: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
-    @State private var filter: FoodLibraryFilter = .all
+    @State private var filter: FoodLibraryFilter
+    private let libraryRowInsets = EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16)
+    private let libraryRowMinHeight: CGFloat = 36
+    private let libraryThumbnailSize: CGFloat = 30
+    private let libraryRowPadding: CGFloat = 2
+
+    init(
+        items: [FoodItem],
+        categories: [Core.Category],
+        units: [Core.FoodUnit],
+        selectedCategoryID: UUID?,
+        selectedFoodID: Binding<UUID?>
+    ) {
+        self.items = items
+        self.categories = categories
+        self.units = units
+        self.selectedCategoryID = selectedCategoryID
+        _selectedFoodID = selectedFoodID
+        _filter = State(initialValue: selectedCategoryID == nil ? .all : .selectedCategory)
+    }
 
     var body: some View {
         List {
@@ -2113,6 +2132,7 @@ private struct FoodLibraryPicker: View {
                     Text("No foods in your library yet.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .listRowInsets(libraryRowInsets)
                 } else {
                     Button {
                         selectedFoodID = nil
@@ -2128,11 +2148,13 @@ private struct FoodLibraryPicker: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .listRowInsets(libraryRowInsets)
 
                     if filteredItems.isEmpty {
                         Text("No foods match your search or filters.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                            .listRowInsets(libraryRowInsets)
                     } else {
                         ForEach(filteredItems) { item in
                             Button {
@@ -2144,7 +2166,8 @@ private struct FoodLibraryPicker: View {
                                     categoryName: categoryName(for: item.categoryID),
                                     unitSymbol: unitSymbol(for: item.unitID),
                                     showsFavorite: false,
-                                    thumbnailSize: 34
+                                    thumbnailSize: libraryThumbnailSize,
+                                    verticalPadding: libraryRowPadding
                                 )
                                 .overlay(alignment: .trailing) {
                                     if selectedFoodID == item.id {
@@ -2154,10 +2177,12 @@ private struct FoodLibraryPicker: View {
                                 }
                             }
                             .buttonStyle(.plain)
+                            .listRowInsets(libraryRowInsets)
                         }
                     }
                 }
             }
+            .environment(\.defaultMinListRowHeight, libraryRowMinHeight)
         }
         .navigationTitle("Library Food")
         .searchable(

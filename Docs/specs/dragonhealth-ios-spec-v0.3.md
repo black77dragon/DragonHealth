@@ -128,6 +128,8 @@ Notes:
 
 - Meal slots are fully configurable in Manage > Plan & Meals.
 - Day boundary is configurable (default 04:00). Entries before the cutoff time count toward the previous day.
+- Meal timing windows are configurable in Manage > Plan & Meals. The global "+" uses the current time to pick the default meal slot.
+- Each meal slot can be excluded from auto selection (e.g., "Brunch" on weekends).
 
 ## 5. Categories and Targets
 
@@ -338,6 +340,8 @@ Migration:
 - Display settings for category and meal summary styles.
 - Quick Add flow: meal slot + category + portion or amount (when available) + optional notes.
 - Food library picker to prefill category and portion.
+- Food library picker uses a compact library list (reduced row padding/insets, smaller thumbnails) to show more items per screen.
+- If a category is already selected in Quick Add, the food library picker defaults its filter to that category (user can change).
 - Entry edit and delete flows with notes.
 
 #### Revised Today + Quick Add Flow (Category-First)
@@ -371,6 +375,7 @@ flowchart TD
 Notes:
 - Category-first is the primary mental model: Today centers on category tiles and category detail.
 - Quick Add always requires category selection; meal slot is optional but defaults to the current meal slot.
+- The current meal slot is determined by the meal timing windows (time of day), skipping any meals marked "exclude from auto".
 - Over-target visibility only applies when targets are range-based or at-most; for minimum targets, exceeding is not negative.
 
 #### Today GUI Wireframe
@@ -492,7 +497,8 @@ Weekly reduction required                       -0.32 kg
 
 - List of foods with favorites section.
 - Add/edit food sheets with category, portion equivalent, amount per portion + unit (optional), notes, and favorite flag.
-- Optional food photos.
+- Optional food photos (choose from photo library or search Unsplash).
+- Unsplash photos store attribution metadata (photographer + source link).
 - Food library items can prefill Quick Add.
 
 ### Documents
@@ -544,7 +550,8 @@ Weekly reduction required                       -0.32 kg
 
 - All data stays on-device unless the user enables iCloud backups.
 - Apple Health access is optional and read-only.
-- No analytics, tracking, or third-party data sharing.
+- Food photo search calls the Unsplash API and downloads the chosen image to local storage.
+- No analytics, tracking, or third-party data sharing beyond photo search.
 
 ## 12. Explicitly Out of Scope (Current Build)
 

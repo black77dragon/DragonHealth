@@ -87,7 +87,7 @@ struct HistoryView: View {
                 foodItems: store.foodItems,
                 units: store.units,
                 preselectedCategoryID: nil,
-                preselectedMealSlotID: nil,
+                preselectedMealSlotID: store.currentMealSlotID(),
                 contextDate: selectedDate,
                 onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {

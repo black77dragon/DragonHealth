@@ -274,33 +274,53 @@ private struct CanvasCard<Content: View>: View {
     }
 
     private var cardBackground: some View {
-        Canvas { context, size in
-            let rect = CGRect(origin: .zero, size: size)
-            let shape = RoundedRectangle(cornerRadius: 18, style: .continuous).path(in: rect)
-            context.fill(shape, with: .color(Color(.secondarySystemBackground)))
-
-            let orbSize = min(size.width, size.height) * 0.7
-            let topOrb = CGRect(
-                x: size.width - orbSize * 0.75,
-                y: -orbSize * 0.35,
-                width: orbSize,
-                height: orbSize
-            )
-            let bottomOrb = CGRect(
-                x: -orbSize * 0.35,
-                y: size.height - orbSize * 0.5,
-                width: orbSize * 0.85,
-                height: orbSize * 0.85
-            )
-            context.fill(Path(ellipseIn: topOrb), with: .color(accent.opacity(0.18)))
-            context.fill(Path(ellipseIn: bottomOrb), with: .color(secondary.opacity(0.16)))
+        GeometryReader { proxy in
+            let size = proxy.size
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                accent.opacity(0.18),
+                                secondary.opacity(0.08),
+                                Color.clear
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                RoundedRectangle(cornerRadius: size.width * 0.12, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.28),
+                                Color.white.opacity(0.02)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: size.width * 0.6, height: size.height * 1.35)
+                    .rotationEffect(.degrees(-18))
+                    .offset(x: size.width * 0.28, y: -size.height * 0.35)
+                    .blendMode(.softLight)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var cardStroke: some View {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .stroke(Color.white.opacity(0.35), lineWidth: 0.7)
+            .strokeBorder(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.55), Color.white.opacity(0.08)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 0.8
+            )
     }
 }
 

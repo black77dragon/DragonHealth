@@ -192,6 +192,7 @@ struct CategoryDayDetailView: View {
         }
         .sheet(isPresented: $quickAddPresented) {
             // Quick Add with day + category prefilled
+            // Food library filter defaults to the selected category
         }
     }
 }

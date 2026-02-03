@@ -137,21 +137,10 @@ private struct LaunchSplashView: View {
 
             VStack(spacing: 24) {
                 VStack(spacing: 14) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 28, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.accentColor.opacity(0.95), Color.accentColor.opacity(0.55)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                        Image("AppIconBadge")
-                            .resizable()
-                            .scaledToFit()
-                            .padding(18)
-                    }
-                    .frame(width: 120, height: 120)
+                    Image("AppIconBadge")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 180, height: 180)
 
                     Text("DragonHealth")
                         .font(.system(.title, design: .serif))

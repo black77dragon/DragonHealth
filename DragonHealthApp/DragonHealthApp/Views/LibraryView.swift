@@ -124,25 +124,46 @@ struct FoodItemRow: View {
     var unitSymbol: String? = nil
     var showsFavorite: Bool = true
     var thumbnailSize: CGFloat = 44
+    var verticalPadding: CGFloat = 4
+    @State private var showingPhotoCredit = false
 
     var body: some View {
         let detailText = detailLine()
         HStack(spacing: 12) {
-            FoodThumbnailView(imagePath: item.imagePath, size: thumbnailSize)
+            FoodThumbnailView(imagePath: item.imagePath, remoteURL: item.imageRemoteURL, size: thumbnailSize)
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name)
                     .font(.subheadline)
                 Text(detailText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let attribution = item.foodImageAttribution {
+                    FoodInlineAttributionView(attribution: attribution)
+                }
             }
             Spacer()
+            if item.foodImageAttribution != nil {
+                Button {
+                    showingPhotoCredit = true
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Photo credit")
+            }
             if showsFavorite, item.isFavorite {
                 Image(systemName: "star.fill")
                     .foregroundStyle(.yellow)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, verticalPadding)
+        .sheet(isPresented: $showingPhotoCredit) {
+            if let attribution = item.foodImageAttribution {
+                FoodPhotoCreditSheet(attribution: attribution)
+            }
+        }
     }
 
     private func detailLine() -> String {
@@ -157,20 +178,34 @@ struct FoodItemRow: View {
 
 struct FoodThumbnailView: View {
     let imagePath: String?
+    let remoteURL: String?
     var size: CGFloat = 44
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(.secondarySystemBackground))
-            if let image = loadImage() {
+            if let remoteURL, let url = URL(string: remoteURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        fallbackImageView()
+                    case .empty:
+                        ProgressView()
+                    @unknown default:
+                        fallbackImageView()
+                    }
+                }
+            } else if let image = loadImage() {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
             } else {
-                Image(systemName: "photo")
-                    .font(.system(size: size * 0.45, weight: .regular))
-                    .foregroundStyle(.secondary)
+                fallbackImageView()
             }
         }
         .frame(width: size, height: size)
@@ -187,15 +222,29 @@ struct FoodThumbnailView: View {
         let url = FoodImageStorage.url(for: imagePath)
         return UIImage(contentsOfFile: url.path)
     }
+
+    @ViewBuilder
+    private func fallbackImageView() -> some View {
+        Image(systemName: "photo")
+            .font(.system(size: size * 0.45, weight: .regular))
+            .foregroundStyle(.secondary)
+    }
 }
 
 private struct FoodEntrySheet: View {
+    private enum PhotoSelectionKind {
+        case none
+        case local
+        case remote
+    }
+
     let categories: [Core.Category]
     let units: [Core.FoodUnit]
     let existingItem: FoodItem?
     let onSave: (FoodItem) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var searchModel = FoodImageSearchModel()
     @State private var name: String
     @State private var categoryID: UUID?
     @State private var portion: Double
@@ -206,6 +255,11 @@ private struct FoodEntrySheet: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
     @State private var existingImagePath: String?
+    @State private var existingAttribution: FoodImageAttribution?
+    @State private var selectedAttribution: FoodImageAttribution?
+    @State private var photoSelectionKind: PhotoSelectionKind = .none
+    @State private var isDownloadingRemote = false
+    @State private var downloadError: String?
     @State private var removeExistingImage = false
 
     init(categories: [Core.Category], units: [Core.FoodUnit], item: FoodItem? = nil, onSave: @escaping (FoodItem) -> Void) {
@@ -221,6 +275,7 @@ private struct FoodEntrySheet: View {
         _notes = State(initialValue: item?.notes ?? "")
         _isFavorite = State(initialValue: item?.isFavorite ?? false)
         _existingImagePath = State(initialValue: item?.imagePath)
+        _existingAttribution = State(initialValue: item?.foodImageAttribution)
     }
 
     var body: some View {
@@ -228,23 +283,92 @@ private struct FoodEntrySheet: View {
             Form {
                 Section("Photo") {
                     HStack(alignment: .center, spacing: 12) {
-                        FoodPhotoPreview(image: selectedImage)
+                        FoodPhotoPreview(
+                            image: selectedImage,
+                            remoteURL: (selectedAttribution ?? existingAttribution)?.remoteURL
+                        )
                         VStack(alignment: .leading, spacing: 8) {
                             PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
                                 Label("Choose Photo", systemImage: "photo")
                             }
                             if selectedImage != nil {
                                 Button(role: .destructive) {
-                                    selectedPhotoItem = nil
-                                    selectedImage = nil
-                                    if existingImagePath != nil {
-                                        removeExistingImage = true
-                                    }
+                                    clearSelectedPhoto()
                                 } label: {
                                     Label("Remove Photo", systemImage: "trash")
                                 }
                             }
                         }
+                    }
+
+                    Divider()
+
+                    Text("Search Unsplash")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            TextField("Search food photos", text: $searchModel.query)
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .submitLabel(.search)
+                                .onSubmit {
+                                    Task { await searchModel.search() }
+                                }
+                            Button("Search") {
+                                Task { await searchModel.search() }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(searchModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+
+                        if !searchModel.isConfigured {
+                            Text("Unsplash API key is not configured.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if searchModel.isLoading {
+                            ProgressView("Searching…")
+                                .font(.caption)
+                        } else if let errorMessage = searchModel.errorMessage {
+                            Text(errorMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if isDownloadingRemote {
+                            ProgressView("Downloading photo…")
+                                .font(.caption)
+                        } else if let downloadError {
+                            Text(downloadError)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if !searchModel.results.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHGrid(rows: [GridItem(.fixed(80))], spacing: 12) {
+                                    ForEach(searchModel.results) { photo in
+                                        Button {
+                                            selectRemotePhoto(photo)
+                                        } label: {
+                                            UnsplashResultCell(
+                                                photo: photo,
+                                                isSelected: selectedAttribution?.sourceID == photo.id
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(isDownloadingRemote)
+                                    }
+                                }
+                                .frame(height: 90)
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    }
+
+                    if let attribution = selectedAttribution ?? existingAttribution {
+                        FoodPhotoAttributionView(attribution: attribution)
                     }
                 }
 
@@ -305,6 +429,7 @@ private struct FoodEntrySheet: View {
                         } else if removeExistingImage, let oldPath = existingImagePath {
                             try? FoodImageStorage.deleteImage(fileName: oldPath)
                         }
+                        let attribution = resolvedAttribution()
                         onSave(
                             FoodItem(
                                 id: itemID,
@@ -315,7 +440,13 @@ private struct FoodEntrySheet: View {
                                 unitID: resolvedUnitID,
                                 notes: notes.isEmpty ? nil : notes,
                                 isFavorite: isFavorite,
-                                imagePath: imagePath
+                                imagePath: imagePath,
+                                imageRemoteURL: attribution?.remoteURL,
+                                imageSource: attribution?.source,
+                                imageSourceID: attribution?.sourceID,
+                                imageAttributionName: attribution?.attributionName,
+                                imageAttributionURL: attribution?.attributionURL,
+                                imageSourceURL: attribution?.sourceURL
                             )
                         )
                         dismiss()
@@ -328,6 +459,9 @@ private struct FoodEntrySheet: View {
                 loadExistingImageIfNeeded()
                 if parsedAmount == nil {
                     unitID = nil
+                }
+                if selectedImage == nil {
+                    photoSelectionKind = .none
                 }
             }
             .task(id: selectedPhotoItem) {
@@ -374,6 +508,8 @@ private struct FoodEntrySheet: View {
         await MainActor.run {
             selectedImage = thumbnail
             removeExistingImage = false
+            selectedAttribution = nil
+            photoSelectionKind = .local
         }
     }
 
@@ -397,23 +533,86 @@ private struct FoodEntrySheet: View {
         guard let image = UIImage(contentsOfFile: url.path) else { return }
         selectedImage = image
     }
+
+    private func selectRemotePhoto(_ photo: UnsplashPhoto) {
+        guard searchModel.isConfigured else { return }
+        downloadError = nil
+        isDownloadingRemote = true
+        Task {
+            do {
+                let image = try await searchModel.selectPhoto(photo)
+                let thumbnail = FoodImageStorage.thumbnailImage(from: image)
+                await MainActor.run {
+                    selectedImage = thumbnail
+                    selectedPhotoItem = nil
+                    removeExistingImage = false
+                    selectedAttribution = searchModel.attribution(for: photo)
+                    photoSelectionKind = .remote
+                }
+            } catch {
+                await MainActor.run {
+                    downloadError = "Download failed: \(error.localizedDescription)"
+                }
+            }
+            await MainActor.run {
+                isDownloadingRemote = false
+            }
+        }
+    }
+
+    private func clearSelectedPhoto() {
+        selectedPhotoItem = nil
+        selectedImage = nil
+        selectedAttribution = nil
+        if existingImagePath != nil {
+            removeExistingImage = true
+        }
+        photoSelectionKind = .none
+    }
+
+    private func resolvedAttribution() -> FoodImageAttribution? {
+        switch photoSelectionKind {
+        case .remote:
+            return selectedAttribution
+        case .local:
+            return nil
+        case .none:
+            return removeExistingImage ? nil : existingAttribution
+        }
+    }
+
+    // Attribution comes from FoodItem via foodImageAttribution.
 }
 
 private struct FoodPhotoPreview: View {
     let image: UIImage?
+    let remoteURL: String?
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.secondarySystemBackground))
-            if let image {
+            if let remoteURL, let url = URL(string: remoteURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        fallbackView()
+                    case .empty:
+                        ProgressView()
+                    @unknown default:
+                        fallbackView()
+                    }
+                }
+            } else if let image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
             } else {
-                Image(systemName: "fork.knife")
-                    .font(.system(size: 28, weight: .regular))
-                    .foregroundStyle(.secondary)
+                fallbackView()
             }
         }
         .frame(width: 72, height: 72)
@@ -422,5 +621,115 @@ private struct FoodPhotoPreview: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color(.separator), lineWidth: 1)
         )
+    }
+
+    @ViewBuilder
+    private func fallbackView() -> some View {
+        Image(systemName: "fork.knife")
+            .font(.system(size: 28, weight: .regular))
+            .foregroundStyle(.secondary)
+    }
+}
+
+private struct UnsplashResultCell: View {
+    let photo: UnsplashPhoto
+    let isSelected: Bool
+
+    var body: some View {
+        ZStack {
+            AsyncImage(url: URL(string: photo.urls.thumb)) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                case .failure:
+                    Color(.secondarySystemBackground)
+                case .empty:
+                    Color(.secondarySystemBackground)
+                @unknown default:
+                    Color(.secondarySystemBackground)
+                }
+            }
+            .frame(width: 80, height: 80)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            if isSelected {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.accentColor, lineWidth: 2)
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(.separator), lineWidth: 1)
+        )
+    }
+}
+
+private struct FoodPhotoAttributionView: View {
+    let attribution: FoodImageAttribution
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            FoodAttributionLine(attribution: attribution)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let url = URL(string: attribution.sourceURL) {
+                Link("View photo on Unsplash", destination: url)
+                    .font(.caption)
+            }
+        }
+    }
+}
+
+private struct FoodInlineAttributionView: View {
+    let attribution: FoodImageAttribution
+
+    var body: some View {
+        FoodAttributionLine(attribution: attribution)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+    }
+}
+
+private struct FoodAttributionLine: View {
+    let attribution: FoodImageAttribution
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("Photo by")
+            if let url = URL(string: attribution.attributionURL) {
+                Link(attribution.attributionName, destination: url)
+            } else {
+                Text(attribution.attributionName)
+            }
+            Text("on")
+            if let url = URL(string: attribution.sourceURL) {
+                Link("Unsplash", destination: url)
+            } else {
+                Text("Unsplash")
+            }
+        }
+    }
+}
+
+private struct FoodPhotoCreditSheet: View {
+    let attribution: FoodImageAttribution
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                FoodAttributionLine(attribution: attribution)
+                    .font(.callout)
+                if let url = URL(string: attribution.sourceURL) {
+                    Link("Open photo on Unsplash", destination: url)
+                        .font(.callout)
+                }
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Photo Credit")
+            .navigationBarTitleDisplayMode(.inline)
+        }
     }
 }

@@ -19,7 +19,7 @@ Rene W. Keller
 ## Current Features
 
 - Today dashboard with adherence summary, category overview, per-meal breakdowns, and configurable display styles.
-- Quick Add logging with meal slot, category, portion wheel (0.25 increments), notes, and food library prefills.
+- Quick Add logging with meal slot, category, portion wheel (0.25 increments), notes, and food library prefills (defaults filter to selected category).
 - History day picker with adherence summary, per-meal entries, and per-category totals.
 - Body metrics logging with 7-day averages, charts, steps tracking, and Apple Health sync.
 - Food library with favorites, photos, portion equivalents, and notes (used in Quick Add).
@@ -35,6 +35,10 @@ Rene W. Keller
 2. If Xcode prompts for missing package dependencies, add the local package at the repo root (`/Users/renekeller/Projects/Dragonhealth`).
 3. Select the `DragonHealthApp` scheme and an iOS Simulator.
 4. Build and run with `⌘R`.
+
+### Unsplash Photo Search
+
+Food photo search uses the Unsplash API. Set the access key in `DragonHealthApp/Info.plist` under `UNSPLASH_ACCESS_KEY`.
 
 ## Product Specification
 

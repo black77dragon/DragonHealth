@@ -34,6 +34,12 @@ struct ManageView: View {
                 }
 
                 NavigationLink {
+                    MealTimingSettingsView()
+                } label: {
+                    Label("Meal Timing", systemImage: "clock.arrow.circlepath")
+                }
+
+                NavigationLink {
                     CategoriesView()
                 } label: {
                     Label("Categories", systemImage: "square.grid.2x2")
@@ -78,6 +84,12 @@ struct ManageView: View {
                 } label: {
                     Label("Apple Health", systemImage: "heart")
                 }
+
+                NavigationLink {
+                    UnsplashSettingsView()
+                } label: {
+                    Label("Unsplash", systemImage: "photo")
+                }
             }
 
             Section("Documents") {
@@ -97,6 +109,88 @@ struct ManageView: View {
             }
         }
         .navigationTitle("Manage")
+    }
+}
+
+private struct UnsplashSettingsView: View {
+    @State private var applicationID = ""
+    @State private var accessKey = ""
+    @State private var showAccessKey = false
+    @State private var statusMessage: String?
+
+    var body: some View {
+        Form {
+            Section("Access Information") {
+                TextField("Application ID", text: $applicationID)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                if showAccessKey {
+                    TextField("Access Key", text: $accessKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                } else {
+                    SecureField("Access Key", text: $accessKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                Toggle("Show Access Key", isOn: $showAccessKey)
+            }
+
+            Section {
+                Button("Save") {
+                    let trimmedID = applicationID.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let trimmedKey = accessKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmedID.isEmpty && trimmedKey.isEmpty {
+                        statusMessage = "Enter an Application ID or Access Key."
+                        return
+                    }
+                    if !trimmedID.isEmpty {
+                        _ = KeychainStore.write(trimmedID, for: .unsplashApplicationID)
+                    }
+                    if !trimmedKey.isEmpty {
+                        _ = KeychainStore.write(trimmedKey, for: .unsplashAccessKey)
+                    }
+                    statusMessage = "Saved to Keychain."
+                }
+
+                Button("Clear Unsplash Keys", role: .destructive) {
+                    _ = KeychainStore.delete(.unsplashApplicationID)
+                    _ = KeychainStore.delete(.unsplashAccessKey)
+                    applicationID = ""
+                    accessKey = ""
+                    statusMessage = "Cleared."
+                }
+            }
+
+            if let statusMessage {
+                Section {
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Notes") {
+                Text("Keys are stored locally in the iOS Keychain. They are not synced or shared.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let appID = UnsplashConfig.applicationID(), !appID.isEmpty {
+                    Text("Application ID loaded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let key = UnsplashConfig.accessKey(), !key.isEmpty {
+                    Text("Access Key loaded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Unsplash")
+        .onAppear {
+            applicationID = KeychainStore.read(.unsplashApplicationID) ?? ""
+            accessKey = KeychainStore.read(.unsplashAccessKey) ?? ""
+        }
     }
 }
 

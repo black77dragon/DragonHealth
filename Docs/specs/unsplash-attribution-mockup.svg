@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="920" viewBox="0 0 1800 920">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f6f7f9"/>
+      <stop offset="100%" stop-color="#eef0f4"/>
+    </linearGradient>
+    <linearGradient id="photo" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e2c8a1"/>
+      <stop offset="100%" stop-color="#caa06b"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.2"/>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="1800" height="920" fill="url(#bg)"/>
+
+  <!-- Left phone frame -->
+  <g transform="translate(80,60)">
+    <rect x="0" y="0" width="720" height="800" rx="56" fill="#1f1f1f" filter="url(#shadow)"/>
+    <rect x="12" y="12" width="696" height="776" rx="48" fill="#f8f8fb"/>
+    <rect x="300" y="26" width="120" height="28" rx="14" fill="#0e0e0e"/>
+    <text x="28" y="52" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#202020">9:41</text>
+    <text x="630" y="52" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#202020">100%</text>
+    <text x="28" y="110" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="600" fill="#202020">Add Food</text>
+
+    <!-- Photo section -->
+    <rect x="20" y="150" width="680" height="270" rx="18" fill="#ffffff"/>
+    <text x="44" y="178" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#6b6b6b">Photo</text>
+    <rect x="44" y="210" width="120" height="120" rx="18" fill="#e9edf2"/>
+    <rect x="44" y="210" width="120" height="120" rx="18" fill="url(#photo)"/>
+    <circle cx="104" cy="270" r="36" fill="#e9d3ae"/>
+    <circle cx="104" cy="270" r="22" fill="#f1e3c9"/>
+
+    <rect x="180" y="220" width="180" height="36" rx="10" fill="#edf0f4"/>
+    <text x="194" y="244" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#333333">Choose Photo</text>
+
+    <text x="180" y="285" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8a8a8a">Search Unsplash</text>
+    <rect x="180" y="302" width="500" height="36" rx="10" fill="#f3f5f8"/>
+    <text x="192" y="325" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#a0a0a0">Greek yoghurt</text>
+
+    <rect x="180" y="352" width="56" height="56" rx="10" fill="#d9dde3"/>
+    <rect x="246" y="352" width="56" height="56" rx="10" fill="#d9dde3"/>
+    <rect x="312" y="352" width="56" height="56" rx="10" fill="#d9dde3"/>
+    <rect x="378" y="352" width="56" height="56" rx="10" fill="#d9dde3"/>
+    <rect x="244" y="350" width="60" height="60" rx="12" fill="none" stroke="#2f7bff" stroke-width="2"/>
+
+    <text x="44" y="405" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#8a8a8a">
+      Photo by James Brown on Unsplash
+    </text>
+
+    <!-- Details section -->
+    <rect x="20" y="440" width="680" height="200" rx="18" fill="#ffffff"/>
+    <text x="44" y="468" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#6b6b6b">Details</text>
+    <rect x="44" y="492" width="632" height="36" rx="10" fill="#f3f5f8"/>
+    <text x="60" y="516" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#404040">Greek Yoghurt</text>
+    <rect x="44" y="540" width="632" height="36" rx="10" fill="#f3f5f8"/>
+    <text x="60" y="564" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#666666">Category: Dairy</text>
+
+    <rect x="560" y="660" width="120" height="40" rx="12" fill="#007aff"/>
+    <text x="600" y="686" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#ffffff">Save</text>
+  </g>
+
+  <!-- Right phone frame -->
+  <g transform="translate(1000,60)">
+    <rect x="0" y="0" width="720" height="800" rx="56" fill="#1f1f1f" filter="url(#shadow)"/>
+    <rect x="12" y="12" width="696" height="776" rx="48" fill="#f8f8fb"/>
+    <rect x="300" y="26" width="120" height="28" rx="14" fill="#0e0e0e"/>
+    <text x="28" y="52" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#202020">9:41</text>
+    <text x="630" y="52" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#202020">100%</text>
+    <text x="28" y="110" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="600" fill="#202020">Photo Credit</text>
+
+    <rect x="20" y="170" width="680" height="200" rx="18" fill="#ffffff"/>
+    <text x="44" y="210" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#202020">Photo by James Brown on Unsplash</text>
+    <rect x="44" y="250" width="632" height="38" rx="10" fill="#edf0f4"/>
+    <text x="60" y="275" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#333333">Open photo on Unsplash</text>
+  </g>
+
+  <text x="720" y="900" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#9a9a9a">
+    iPhone 17 Pro mockups (conceptual frame)
+  </text>
+</svg>
