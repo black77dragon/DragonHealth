@@ -6,8 +6,13 @@ import UIKit
 struct LibraryView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingAdd = false
+    @State private var showingAddTypePicker = false
+    @State private var addKind: FoodItemKind = .single
     @State private var editingItem: FoodItem?
     @State private var searchText = ""
+    @State private var exportFile: ExportFile?
+    @State private var showingExportError = false
+    @State private var exportErrorMessage = ""
 
     var body: some View {
         List {
@@ -46,7 +51,16 @@ struct LibraryView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    showingAdd = true
+                    exportFoodLibrary()
+                } label: {
+                    Label("Export Library", systemImage: "square.and.arrow.up")
+                }
+                .labelStyle(.iconOnly)
+                .glassButton(.icon)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showingAddTypePicker = true
                 } label: {
                     Label("Add Food", systemImage: "plus")
                 }
@@ -55,14 +69,45 @@ struct LibraryView: View {
             }
         }
         .sheet(isPresented: $showingAdd) {
-            FoodEntrySheet(categories: store.categories, units: store.units) { item in
+            FoodEntrySheet(
+                categories: store.categories,
+                units: store.units,
+                allItems: store.foodItems,
+                initialKind: addKind
+            ) { item in
                 Task { await store.saveFoodItem(item) }
             }
         }
         .sheet(item: $editingItem) { item in
-            FoodEntrySheet(categories: store.categories, units: store.units, item: item) { updatedItem in
+            FoodEntrySheet(
+                categories: store.categories,
+                units: store.units,
+                allItems: store.foodItems,
+                item: item
+            ) { updatedItem in
                 Task { await store.saveFoodItem(updatedItem) }
             }
+        }
+        .confirmationDialog("New Library Item", isPresented: $showingAddTypePicker, titleVisibility: .visible) {
+            Button("Food Item") {
+                addKind = .single
+                showingAdd = true
+            }
+            Button("Composite Food") {
+                addKind = .composite
+                showingAdd = true
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Choose what to add.")
+        }
+        .sheet(item: $exportFile, onDismiss: clearExportFile) { file in
+            ActivityShareSheet(activityItems: [file.url])
+        }
+        .alert("Export Failed", isPresented: $showingExportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportErrorMessage)
         }
     }
 
@@ -100,6 +145,78 @@ struct LibraryView: View {
             let item = items[index]
             Task { await store.deleteFoodItem(item) }
         }
+    }
+
+    private func exportFoodLibrary() {
+        do {
+            let payload = FoodLibraryExportPayload(
+                exportedAt: ISO8601DateFormatter().string(from: Date()),
+                itemCount: store.foodItems.count,
+                items: store.foodItems.map { item in
+                    FoodLibraryExportItem(
+                        id: item.id.uuidString,
+                        name: item.name,
+                        categoryID: item.categoryID.uuidString,
+                        categoryName: categoryName(for: item.categoryID),
+                        portionEquivalent: item.portionEquivalent,
+                        amountPerPortion: item.amountPerPortion,
+                        unitID: item.unitID?.uuidString,
+                        unitName: unitName(for: item.unitID),
+                        unitSymbol: unitSymbol(for: item.unitID),
+                        notes: item.notes,
+                        isFavorite: item.isFavorite,
+                        imagePath: item.imagePath,
+                        imageRemoteURL: item.imageRemoteURL,
+                        imageSource: item.imageSource?.rawValue,
+                        imageSourceID: item.imageSourceID,
+                        imageAttributionName: item.imageAttributionName,
+                        imageAttributionURL: item.imageAttributionURL,
+                        imageSourceURL: item.imageSourceURL,
+                        kind: item.kind.rawValue,
+                        compositeComponents: item.compositeComponents.map {
+                            FoodLibraryExportComponent(
+                                foodItemID: $0.foodItemID.uuidString,
+                                portionMultiplier: $0.portionMultiplier
+                            )
+                        }
+                    )
+                }
+            )
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.nonConformingFloatEncodingStrategy = .convertToString(
+                positiveInfinity: "Infinity",
+                negativeInfinity: "-Infinity",
+                nan: "NaN"
+            )
+
+            let data = try encoder.encode(payload)
+            let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(exportFileName())
+            try data.write(to: fileURL, options: .atomic)
+            exportFile = ExportFile(url: fileURL)
+        } catch {
+            exportErrorMessage = error.localizedDescription
+            showingExportError = true
+        }
+    }
+
+    private func exportFileName() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return "dragonhealth-food-library-\(formatter.string(from: Date())).json"
+    }
+
+    private func clearExportFile() {
+        guard let url = exportFile?.url else { return }
+        try? FileManager.default.removeItem(at: url)
+        exportFile = nil
+    }
+
+    private func unitName(for id: UUID?) -> String? {
+        guard let id else { return nil }
+        return store.units.first(where: { $0.id == id })?.name
     }
 
     @ViewBuilder
@@ -169,6 +286,17 @@ struct FoodItemRow: View {
     }
 
     private func detailLine() -> String {
+        if item.kind.isComposite {
+            var parts: [String] = [
+                "Composite",
+                "\(item.compositeComponents.count) component\(item.compositeComponents.count == 1 ? "" : "s")"
+            ]
+            if let notes = item.notes?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !notes.isEmpty {
+                parts.append("Notes: \(notes)")
+            }
+            return parts.joined(separator: " • ")
+        }
         var parts: [String] = [
             categoryName,
             "\(item.portionEquivalent.cleanNumber) portion"
@@ -254,18 +382,38 @@ private struct FoodEntrySheet: View {
         var id: String { rawValue }
     }
 
+    private struct CompositeComponentDraft: Identifiable {
+        let id: UUID
+        var foodItemID: UUID?
+        var portionMultiplier: Double
+
+        init(id: UUID = UUID(), foodItemID: UUID? = nil, portionMultiplier: Double = 1.0) {
+            self.id = id
+            self.foodItemID = foodItemID
+            self.portionMultiplier = portionMultiplier
+        }
+    }
+
+    private struct ComponentPickerContext: Identifiable {
+        let id: UUID
+    }
+
     let categories: [Core.Category]
     let units: [Core.FoodUnit]
+    let allItems: [FoodItem]
     let existingItem: FoodItem?
+    let initialKind: FoodItemKind
     let onSave: (FoodItem) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var searchModel = FoodImageSearchModel()
     @State private var name: String
+    @State private var itemKind: FoodItemKind
     @State private var categoryID: UUID?
     @State private var portion: Double
     @State private var amountText: String
     @State private var unitID: UUID?
+    @State private var components: [CompositeComponentDraft]
     @State private var notes: String
     @State private var isFavorite: Bool
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -278,18 +426,32 @@ private struct FoodEntrySheet: View {
     @State private var downloadError: String?
     @State private var removeExistingImage = false
     @State private var photoSource: PhotoSource = .local
+    @State private var componentPickerContext: ComponentPickerContext?
     private let compactRowInsets = EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
 
-    init(categories: [Core.Category], units: [Core.FoodUnit], item: FoodItem? = nil, onSave: @escaping (FoodItem) -> Void) {
+    init(
+        categories: [Core.Category],
+        units: [Core.FoodUnit],
+        allItems: [FoodItem],
+        item: FoodItem? = nil,
+        initialKind: FoodItemKind = .single,
+        onSave: @escaping (FoodItem) -> Void
+    ) {
         self.categories = categories
         self.units = units
+        self.allItems = allItems
         self.existingItem = item
+        self.initialKind = initialKind
         self.onSave = onSave
         _name = State(initialValue: item?.name ?? "")
+        _itemKind = State(initialValue: item?.kind ?? initialKind)
         _categoryID = State(initialValue: item?.categoryID)
         _portion = State(initialValue: item?.portionEquivalent ?? 1.0)
         _amountText = State(initialValue: item?.amountPerPortion.map { $0.cleanNumber } ?? "")
         _unitID = State(initialValue: item?.unitID)
+        _components = State(initialValue: item?.compositeComponents.map {
+            CompositeComponentDraft(foodItemID: $0.foodItemID, portionMultiplier: max(0.1, $0.portionMultiplier))
+        } ?? [])
         _notes = State(initialValue: item?.notes ?? "")
         _isFavorite = State(initialValue: item?.isFavorite ?? false)
         _existingImagePath = State(initialValue: item?.imagePath)
@@ -407,26 +569,37 @@ private struct FoodEntrySheet: View {
                     }
                 }
 
+                Section("Type") {
+                    Picker("Item Type", selection: $itemKind) {
+                        Text("Food").tag(FoodItemKind.single)
+                        Text("Composite").tag(FoodItemKind.composite)
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(existingItem != nil)
+                }
+
                 Section("Details") {
                     LabeledContent("Name") {
                         TextField("Required", text: $name)
                     }
                     .listRowInsets(compactRowInsets)
-                    LabeledContent("Category") {
-                        Picker("", selection: $categoryID) {
-                            ForEach(categories) { category in
-                                Text(category.name).tag(Optional(category.id))
+                    if !itemKind.isComposite {
+                        LabeledContent("Category") {
+                            Picker("", selection: $categoryID) {
+                                ForEach(categories) { category in
+                                    Text(category.name).tag(Optional(category.id))
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                        .listRowInsets(compactRowInsets)
+                        LabeledContent("Portion") {
+                            Stepper(value: $portion, in: 0.1...6.0, step: 0.1) {
+                                Text(portion.cleanNumber)
                             }
                         }
-                        .labelsHidden()
+                        .listRowInsets(compactRowInsets)
                     }
-                    .listRowInsets(compactRowInsets)
-                    LabeledContent("Portion") {
-                        Stepper(value: $portion, in: 0.1...6.0, step: 0.1) {
-                            Text(portion.cleanNumber)
-                        }
-                    }
-                    .listRowInsets(compactRowInsets)
                     LabeledContent("Favorite") {
                         Toggle("", isOn: $isFavorite)
                             .labelsHidden()
@@ -443,39 +616,13 @@ private struct FoodEntrySheet: View {
                     .listRowInsets(compactRowInsets)
                 }
 
-                Section("Portion Size") {
-                    LabeledContent("Amount/portion") {
-                        HStack(spacing: 8) {
-                            TextField("Required", text: $amountText)
-                                .keyboardType(unitAllowsDecimal ? .decimalPad : .numberPad)
-                                .multilineTextAlignment(.trailing)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(minWidth: 90)
-                            Picker("", selection: $unitID) {
-                                Text("None").tag(Optional<UUID>.none)
-                                ForEach(availableUnits) { unit in
-                                    Text("\(unit.name) (\(unit.symbol))").tag(Optional(unit.id))
-                                }
-                            }
-                            .labelsHidden()
-                        }
-                    }
-                    .listRowInsets(compactRowInsets)
-                    if amountText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("Enter the numeric amount for one portion (for example, 100).")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .listRowInsets(compactRowInsets)
-                    }
-                    if let amountValue = parsedAmount, let unitSymbol = unitSymbol(for: unitID) {
-                        Text("1 portion = \(amountValue.cleanNumber) \(unitSymbol)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .listRowInsets(compactRowInsets)
-                    }
+                if itemKind.isComposite {
+                    componentsSection
+                } else {
+                    portionSizeSection
                 }
             }
-            .navigationTitle(existingItem == nil ? "Add Food" : "Edit Food")
+            .navigationTitle(navigationTitle)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -483,9 +630,22 @@ private struct FoodEntrySheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        guard let categoryID else { return }
-                        let amountValue = parsedAmount
-                        let resolvedUnitID = amountValue == nil ? nil : unitID
+                        let isComposite = itemKind.isComposite
+                        let resolvedComponents = isComposite ? validatedComponents : []
+                        guard !isComposite || !resolvedComponents.isEmpty else { return }
+                        let fallbackCategoryID = categories.first?.id ?? UUID()
+                        let resolvedCategoryID: UUID
+                        if isComposite {
+                            let componentCategoryID = resolvedComponents.first.flatMap { component in
+                                componentFoods.first(where: { $0.id == component.foodItemID })?.categoryID
+                            }
+                            resolvedCategoryID = componentCategoryID ?? categoryID ?? fallbackCategoryID
+                        } else {
+                            guard let categoryID else { return }
+                            resolvedCategoryID = categoryID
+                        }
+                        let amountValue = isComposite ? nil : parsedAmount
+                        let resolvedUnitID = isComposite || amountValue == nil ? nil : unitID
                         let itemID = existingItem?.id ?? UUID()
                         var imagePath = removeExistingImage ? nil : existingImagePath
                         if let savedPath = saveImageIfNeeded(itemID: itemID) {
@@ -501,8 +661,8 @@ private struct FoodEntrySheet: View {
                             FoodItem(
                                 id: itemID,
                                 name: name,
-                                categoryID: categoryID,
-                                portionEquivalent: Portion.roundToIncrement(portion),
+                                categoryID: resolvedCategoryID,
+                                portionEquivalent: isComposite ? 1.0 : Portion.roundToIncrement(portion),
                                 amountPerPortion: amountValue,
                                 unitID: resolvedUnitID,
                                 notes: notes.isEmpty ? nil : notes,
@@ -513,19 +673,24 @@ private struct FoodEntrySheet: View {
                                 imageSourceID: attribution?.sourceID,
                                 imageAttributionName: attribution?.attributionName,
                                 imageAttributionURL: attribution?.attributionURL,
-                                imageSourceURL: attribution?.sourceURL
+                                imageSourceURL: attribution?.sourceURL,
+                                kind: itemKind,
+                                compositeComponents: resolvedComponents
                             )
                         )
                         dismiss()
                     }
                     .glassButton(.text)
-                    .disabled(name.isEmpty || categoryID == nil || !isAmountSelectionValid)
+                    .disabled(name.isEmpty || !isSaveValid)
                 }
             }
             .onAppear {
                 categoryID = categoryID ?? categories.first?.id
                 loadExistingImageIfNeeded()
-                if parsedAmount == nil {
+                if itemKind.isComposite {
+                    amountText = ""
+                    unitID = nil
+                } else if parsedAmount == nil {
                     unitID = nil
                 }
                 if selectedImage == nil {
@@ -537,14 +702,157 @@ private struct FoodEntrySheet: View {
                     photoSource = .local
                 }
             }
+            .onChange(of: itemKind) { _, newValue in
+                if newValue.isComposite {
+                    amountText = ""
+                    unitID = nil
+                    portion = Portion.roundToIncrement(max(0.1, portion))
+                } else if categoryID == nil {
+                    categoryID = categories.first?.id
+                }
+            }
             .task(id: selectedPhotoItem) {
                 await handleSelectedPhoto()
             }
+            .sheet(item: $componentPickerContext, content: componentPickerSheet)
         }
     }
 
     private var availableUnits: [Core.FoodUnit] {
         units.filter { $0.isEnabled || $0.id == unitID }
+    }
+
+    @ViewBuilder
+    private var componentsSection: some View {
+        Section("Components") {
+            if components.isEmpty {
+                Text("Add at least one component food.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach($components) { $component in
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        componentPickerContext = ComponentPickerContext(id: component.id)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("Food")
+                            Spacer()
+                            Text(selectedFoodName(for: component.foodItemID) ?? "Select food")
+                                .foregroundStyle(component.foodItemID == nil ? .secondary : .primary)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    Stepper(value: $component.portionMultiplier, in: 0.1...6.0, step: 0.1) {
+                        Text("Multiplier: \(Portion.roundToIncrement(component.portionMultiplier).cleanNumber)x")
+                    }
+                }
+                .listRowInsets(compactRowInsets)
+            }
+            .onDelete { offsets in
+                let removedIDs: [UUID] = offsets.compactMap { index in
+                    guard components.indices.contains(index) else { return nil }
+                    return components[index].id
+                }
+                components.remove(atOffsets: offsets)
+                if let activeID = componentPickerContext?.id, removedIDs.contains(activeID) {
+                    componentPickerContext = nil
+                }
+            }
+            Button {
+                let component = CompositeComponentDraft()
+                components.append(component)
+                componentPickerContext = ComponentPickerContext(id: component.id)
+            } label: {
+                Label("Add Component", systemImage: "plus")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var portionSizeSection: some View {
+        Section("Portion Size") {
+            LabeledContent("Amount/portion") {
+                HStack(spacing: 8) {
+                    TextField("Required", text: $amountText)
+                        .keyboardType(unitAllowsDecimal ? .decimalPad : .numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 90)
+                    Picker("", selection: $unitID) {
+                        Text("None").tag(Optional<UUID>.none)
+                        ForEach(availableUnits) { unit in
+                            Text("\(unit.name) (\(unit.symbol))").tag(Optional(unit.id))
+                        }
+                    }
+                    .labelsHidden()
+                }
+            }
+            .listRowInsets(compactRowInsets)
+            if amountText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Enter the numeric amount for one portion (for example, 100).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .listRowInsets(compactRowInsets)
+            }
+            if let amountValue = parsedAmount, let unitSymbol = unitSymbol(for: unitID) {
+                Text("1 portion = \(amountValue.cleanNumber) \(unitSymbol)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .listRowInsets(compactRowInsets)
+            }
+        }
+    }
+
+    private var navigationTitle: String {
+        if existingItem == nil {
+            return itemKind.isComposite ? "Add Composite" : "Add Food"
+        }
+        return itemKind.isComposite ? "Edit Composite" : "Edit Food"
+    }
+
+    private var componentFoods: [FoodItem] {
+        allItems.filter { !$0.kind.isComposite && $0.id != existingItem?.id }
+    }
+
+    private func componentPickerSheet(context: ComponentPickerContext) -> some View {
+        ComponentFoodPickerSheet(
+            foods: componentFoods,
+            selectedFoodID: selectedFoodID(for: context.id),
+            onSelect: { selectedFoodID in
+                updateSelectedFood(selectedFoodID, for: context.id)
+            }
+        )
+    }
+
+    private func selectedFoodID(for componentID: UUID) -> UUID? {
+        components.first(where: { $0.id == componentID })?.foodItemID
+    }
+
+    private func updateSelectedFood(_ selectedFoodID: UUID?, for componentID: UUID) {
+        guard let index = components.firstIndex(where: { $0.id == componentID }) else { return }
+        components[index].foodItemID = selectedFoodID
+    }
+
+    private func selectedFoodName(for id: UUID?) -> String? {
+        guard let id else { return nil }
+        return componentFoods.first(where: { $0.id == id })?.name
+    }
+
+    private var validatedComponents: [Core.FoodComponent] {
+        components.compactMap { component in
+            guard let foodItemID = component.foodItemID,
+                  componentFoods.contains(where: { $0.id == foodItemID }) else {
+                return nil
+            }
+            return Core.FoodComponent(
+                foodItemID: foodItemID,
+                portionMultiplier: max(0.1, component.portionMultiplier)
+            )
+        }
     }
 
     private var shouldShowRemovePhoto: Bool {
@@ -565,6 +873,13 @@ private struct FoodEntrySheet: View {
     private var isAmountSelectionValid: Bool {
         if parsedAmount == nil { return true }
         return unitID != nil
+    }
+
+    private var isSaveValid: Bool {
+        if itemKind.isComposite {
+            return !validatedComponents.isEmpty
+        }
+        return categoryID != nil && isAmountSelectionValid
     }
 
     private var unitAllowsDecimal: Bool {
@@ -659,6 +974,78 @@ private struct FoodEntrySheet: View {
     }
 
     // Attribution comes from FoodItem via foodImageAttribution.
+}
+
+private struct ComponentFoodPickerSheet: View {
+    let foods: [FoodItem]
+    let selectedFoodID: UUID?
+    let onSelect: (UUID?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Button {
+                    onSelect(nil)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text("None")
+                        Spacer()
+                        if selectedFoodID == nil {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+
+                ForEach(filteredFoods) { item in
+                    Button {
+                        onSelect(item.id)
+                        dismiss()
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name)
+                                if let notes = item.notes?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   !notes.isEmpty {
+                                    Text(notes)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            Spacer()
+                            if item.id == selectedFoodID {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.tint)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle("Select Food")
+            .searchable(text: $searchText, prompt: "Search foods")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var filteredFoods: [FoodItem] {
+        let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return foods }
+        return foods.filter { item in
+            item.name.localizedStandardContains(term)
+                || (item.notes ?? "").localizedStandardContains(term)
+        }
+    }
 }
 
 private struct FoodPhotoPreview: View {
@@ -808,5 +1195,56 @@ private struct FoodPhotoCreditSheet: View {
             .navigationTitle("Photo Credit")
             .navigationBarTitleDisplayMode(.inline)
         }
+    }
+}
+
+private struct FoodLibraryExportPayload: Encodable {
+    let exportedAt: String
+    let itemCount: Int
+    let items: [FoodLibraryExportItem]
+}
+
+private struct FoodLibraryExportItem: Encodable {
+    let id: String
+    let name: String
+    let categoryID: String
+    let categoryName: String
+    let portionEquivalent: Double
+    let amountPerPortion: Double?
+    let unitID: String?
+    let unitName: String?
+    let unitSymbol: String?
+    let notes: String?
+    let isFavorite: Bool
+    let imagePath: String?
+    let imageRemoteURL: String?
+    let imageSource: String?
+    let imageSourceID: String?
+    let imageAttributionName: String?
+    let imageAttributionURL: String?
+    let imageSourceURL: String?
+    let kind: String
+    let compositeComponents: [FoodLibraryExportComponent]
+}
+
+private struct FoodLibraryExportComponent: Encodable {
+    let foodItemID: String
+    let portionMultiplier: Double
+}
+
+private struct ExportFile: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct ActivityShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    var applicationActivities: [UIActivity]? = nil
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
     }
 }

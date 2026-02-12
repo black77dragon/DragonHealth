@@ -37,10 +37,10 @@ struct HistoryCalendarView: View {
             monthGrid
         }
         .onAppear { onVisibleMonthChanged(displayedMonth) }
-        .onChange(of: displayedMonth) { newValue in
+        .onChange(of: displayedMonth) { _, newValue in
             onVisibleMonthChanged(newValue)
         }
-        .onChange(of: selectedDate) { newValue in
+        .onChange(of: selectedDate) { _, newValue in
             let newMonth = Self.monthStart(for: newValue, calendar: calendar)
             if !calendar.isDate(newMonth, equalTo: displayedMonth, toGranularity: .month) {
                 displayedMonth = newMonth

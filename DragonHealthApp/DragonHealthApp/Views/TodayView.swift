@@ -148,7 +148,7 @@ struct TodayView: View {
                 style: quickAddStyle,
                 onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
-                        await store.logPortion(
+                        await store.logFoodSelection(
                             date: Date(),
                             mealSlotID: mealSlot.id,
                             categoryID: category.id,
@@ -167,7 +167,7 @@ struct TodayView: View {
             VoiceLogSheet(
                 categories: store.categories.filter { $0.isEnabled },
                 mealSlots: store.mealSlots,
-                foodItems: store.foodItems,
+                foodItems: store.foodItems.filter { !$0.kind.isComposite },
                 units: store.units,
                 onSave: { mealSlot, items, _ in
                     Task {
@@ -504,7 +504,7 @@ private struct CategoryDayDetailView: View {
                 style: quickAddStyle,
                 onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
-                        await store.logPortion(
+                        await store.logFoodSelection(
                             date: Date(),
                             mealSlotID: mealSlot.id,
                             categoryID: category.id,
@@ -570,6 +570,12 @@ private struct CategoryDayEntryRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(mealSlotName)
                     .font(.subheadline)
+                if let compositeName = entry.compositeFoodName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !compositeName.isEmpty {
+                    Text("from \(compositeName)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if let note = entry.notes?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !note.isEmpty {
                     Text(note)
@@ -696,7 +702,7 @@ private struct MealDayDetailView: View {
                 style: quickAddStyle,
                 onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
                     Task {
-                        await store.logPortion(
+                        await store.logFoodSelection(
                             date: Date(),
                             mealSlotID: mealSlot.id,
                             categoryID: category.id,
@@ -777,6 +783,11 @@ private struct MealDayEntryRow: View {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    private var compositeName: String? {
+        let trimmed = entry.compositeFoodName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private var portionText: String {
         let unitName = category?.unitName ?? ""
         return unitName.isEmpty ? entry.portion.value.cleanNumber : "\(entry.portion.value.cleanNumber) \(unitName)"
@@ -801,6 +812,11 @@ private struct MealDayEntryRow: View {
             }
             if let foodItem {
                 Text("Food: \(foodItem.name)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let compositeName {
+                Text("From composite: \(compositeName)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1231,6 +1247,26 @@ private struct TodayMealDetailsSection: View {
 }
 
 private struct MealSectionView: View {
+    private struct CompositeGroup: Identifiable {
+        let id: UUID
+        let name: String
+        let entries: [DailyLogEntry]
+    }
+
+    private enum DisplayItem: Identifiable {
+        case entry(DailyLogEntry)
+        case composite(CompositeGroup)
+
+        var id: String {
+            switch self {
+            case .entry(let entry):
+                return "entry-\(entry.id.uuidString)"
+            case .composite(let group):
+                return "composite-\(group.id.uuidString)"
+            }
+        }
+    }
+
     let mealSlot: MealSlot
     let entries: [DailyLogEntry]
     let categories: [Core.Category]
@@ -1243,6 +1279,25 @@ private struct MealSectionView: View {
             return CategoryColorPalette.color(for: category)
         }
         return CategoryColorPalette.fallback
+    }
+
+    private var displayItems: [DisplayItem] {
+        var items: [DisplayItem] = []
+        var seenGroupIDs = Set<UUID>()
+        for entry in entries {
+            guard let groupID = entry.compositeGroupID else {
+                items.append(.entry(entry))
+                continue
+            }
+            guard !seenGroupIDs.contains(groupID) else { continue }
+            seenGroupIDs.insert(groupID)
+            let groupedEntries = entries.filter { $0.compositeGroupID == groupID }
+            let fallbackName = groupedEntries.first?.compositeFoodID
+                .flatMap { id in foodItems.first(where: { $0.id == id })?.name }
+            let name = groupedEntries.first?.compositeFoodName ?? fallbackName ?? "Composite food"
+            items.append(.composite(CompositeGroup(id: groupID, name: name, entries: groupedEntries)))
+        }
+        return items
     }
 
     var body: some View {
@@ -1261,6 +1316,63 @@ private struct MealSectionView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
+                ForEach(displayItems) { item in
+                    switch item {
+                    case .entry(let entry):
+                        MealEntryRow(
+                            entry: entry,
+                            categoryName: categoryName(for: entry),
+                            foodName: foodName(for: entry),
+                            categoryColor: categoryColor(for: entry),
+                            onViewDetails: onViewDetails,
+                            onEdit: onEdit,
+                            onDelete: onDelete
+                        )
+                    case .composite(let group):
+                        CompositeMealGroupRow(
+                            groupName: group.name,
+                            entries: group.entries,
+                            categories: categories,
+                            foodItems: foodItems,
+                            onViewDetails: onViewDetails,
+                            onEdit: onEdit,
+                            onDelete: onDelete
+                        )
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+
+    private func categoryName(for entry: DailyLogEntry) -> String {
+        categories.first(where: { $0.id == entry.categoryID })?.name ?? "Category"
+    }
+
+    private func foodName(for entry: DailyLogEntry) -> String? {
+        guard let foodID = entry.foodItemID else { return nil }
+        let name = foodItems.first(where: { $0.id == foodID })?.name ?? ""
+        return name.isEmpty ? nil : name
+    }
+}
+
+private struct CompositeMealGroupRow: View {
+    let groupName: String
+    let entries: [DailyLogEntry]
+    let categories: [Core.Category]
+    let foodItems: [FoodItem]
+    let onViewDetails: (DailyLogEntry) -> Void
+    let onEdit: (DailyLogEntry) -> Void
+    let onDelete: (DailyLogEntry) -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(entries) { entry in
                     MealEntryRow(
                         entry: entry,
@@ -1273,12 +1385,35 @@ private struct MealSectionView: View {
                     )
                 }
             }
+            .padding(.top, 6)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "square.stack.3d.up")
+                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(groupName)
+                        .font(.subheadline)
+                    Text("\(entries.count) components")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(entries.reduce(0) { $0 + $1.portion.value }.cleanNumber)
+                    .font(.subheadline)
+            }
         }
-        .padding(12)
+        .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(.systemBackground))
         )
+    }
+
+    private func categoryColor(for entry: DailyLogEntry) -> Color {
+        guard let category = categories.first(where: { $0.id == entry.categoryID }) else {
+            return CategoryColorPalette.fallback
+        }
+        return CategoryColorPalette.color(for: category)
     }
 
     private func categoryName(for entry: DailyLogEntry) -> String {
@@ -1386,6 +1521,11 @@ private struct EntryDetailSheet: View {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    private var compositeName: String? {
+        let trimmed = entry.compositeFoodName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private var portionText: String {
         let unitName = category?.unitName ?? ""
         return unitName.isEmpty ? entry.portion.value.cleanNumber : "\(entry.portion.value.cleanNumber) \(unitName)"
@@ -1443,6 +1583,12 @@ private struct EntryDetailSheet: View {
                     } else {
                         Text("No food selected")
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let compositeName {
+                    Section("Composite") {
+                        Text(compositeName)
                     }
                 }
 
@@ -1782,16 +1928,18 @@ struct QuickAddSheet: View {
     }
     private var availableFoodItems: [FoodItem] {
         let allowedCategoryIDs = Set(categories.map(\.id))
-        return foodItems.filter { allowedCategoryIDs.contains($0.categoryID) }
-    }
-
-    private func categoryName(for id: UUID) -> String {
-        categories.first(where: { $0.id == id })?.name ?? "Unassigned"
+        return foodItems.filter { item in
+            allowedCategoryIDs.contains(item.categoryID) && (preselectedCategoryID == nil || !item.kind.isComposite)
+        }
     }
 
     private var selectedFoodItem: FoodItem? {
         guard let selectedFoodID else { return nil }
         return availableFoodItems.first(where: { $0.id == selectedFoodID })
+    }
+
+    private var isCompositeFoodSelected: Bool {
+        selectedFoodItem?.kind.isComposite == true
     }
 
     private var selectedUnit: Core.FoodUnit? {
@@ -1839,6 +1987,40 @@ struct QuickAddSheet: View {
         return true
     }
 
+    private var selectedMealSlotName: String? {
+        guard let selectedMealSlotID else { return nil }
+        return mealSlots.first(where: { $0.id == selectedMealSlotID })?.name
+    }
+
+    private var mealSelectionSummary: String {
+        if let selectedMealSlotName {
+            return selectedMealSlotName
+        }
+        if isCategoryFirst, let fallbackMealSlot {
+            return "Auto (\(fallbackMealSlot.name))"
+        }
+        return "Choose meal"
+    }
+
+    private var foodSelectionSummary: String {
+        guard let selectedFoodID,
+              let item = availableFoodItems.first(where: { $0.id == selectedFoodID }) else {
+            return "Choose food"
+        }
+        return item.name
+    }
+
+    private var categorySelectionSummary: String {
+        if isCompositeFoodSelected {
+            return "Composite Food"
+        }
+        guard let selectedCategoryID,
+              let category = categories.first(where: { $0.id == selectedCategoryID }) else {
+            return "Choose category"
+        }
+        return category.name
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -1849,15 +2031,7 @@ struct QuickAddSheet: View {
                     }
                 }
 
-                if isCategoryFirst {
-                    categorySection
-                    foodSection
-                    mealSection
-                } else {
-                    mealSection
-                    foodSection
-                    categorySection
-                }
+                selectorSection
 
                 inputModeSection
                 portionSection
@@ -1949,33 +2123,21 @@ struct QuickAddSheet: View {
     }
 
     @ViewBuilder
-    private var mealSection: some View {
-        Section("Meal") {
-            Picker("Meal Slot", selection: $selectedMealSlotID) {
-                if isCategoryFirst {
-                    Text("Auto").tag(Optional<UUID>.none)
-                }
-                ForEach(mealSlots) { slot in
-                    Text(slot.name).tag(Optional(slot.id))
-                }
+    private var selectorSection: some View {
+        Section {
+            NavigationLink {
+                QuickAddMealSlotPicker(
+                    mealSlots: mealSlots,
+                    isCategoryFirst: isCategoryFirst,
+                    fallbackMealSlot: fallbackMealSlot,
+                    selectedMealSlotID: $selectedMealSlotID
+                )
+            } label: {
+                selectorRow(title: "Meal", value: mealSelectionSummary, isPlaceholder: selectedMealSlotID == nil)
             }
-            if isCategoryFirst,
-               selectedMealSlotID == nil,
-               let fallbackMealSlot {
-                Text("Defaults to \(fallbackMealSlot.name).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
 
-    @ViewBuilder
-    private var foodSection: some View {
-        Section("Food") {
             if availableFoodItems.isEmpty {
-                Text("No foods in your library yet.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                selectorRow(title: "Food", value: "No foods in library", isPlaceholder: true)
             } else {
                 NavigationLink {
                     FoodLibraryPicker(
@@ -1986,37 +2148,34 @@ struct QuickAddSheet: View {
                         selectedFoodID: $selectedFoodID
                     )
                 } label: {
-                    if let selectedFoodID,
-                       let item = availableFoodItems.first(where: { $0.id == selectedFoodID }) {
-                        FoodItemRow(
-                            item: item,
-                            categoryName: categoryName(for: item.categoryID),
-                            unitSymbol: selectedUnit?.symbol,
-                            thumbnailSize: 34
-                        )
-                    } else {
-                        Text("Choose a food")
-                            .foregroundStyle(.secondary)
-                    }
+                    selectorRow(title: "Food", value: foodSelectionSummary, isPlaceholder: selectedFoodID == nil)
+                }
+            }
+
+            if isCompositeFoodSelected {
+                selectorRow(title: "Category", value: categorySelectionSummary, isPlaceholder: false)
+                    .foregroundStyle(.secondary)
+            } else {
+                NavigationLink {
+                    QuickAddCategoryPicker(
+                        categories: categories,
+                        selectedCategoryID: $selectedCategoryID
+                    )
+                } label: {
+                    selectorRow(title: "Category", value: categorySelectionSummary, isPlaceholder: selectedCategoryID == nil)
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private var categorySection: some View {
-        Section("Category") {
-            Picker("Category", selection: $selectedCategoryID) {
-                ForEach(categories) { category in
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(CategoryColorPalette.color(for: category))
-                            .frame(width: 10, height: 10)
-                        Text(category.name)
-                    }
-                    .tag(Optional(category.id))
-                }
-            }
+    private func selectorRow(title: String, value: String, isPlaceholder: Bool) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+            Spacer(minLength: 12)
+            Text(value)
+                .foregroundStyle(isPlaceholder ? .secondary : .primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
     }
 
@@ -2112,6 +2271,90 @@ struct QuickAddSheet: View {
         let correctedAmount = roundedAmountValue(clamped * amountPerPortion)
         amountText = correctedAmount.cleanNumber
         isSyncing = false
+    }
+}
+
+private struct QuickAddMealSlotPicker: View {
+    let mealSlots: [MealSlot]
+    let isCategoryFirst: Bool
+    let fallbackMealSlot: MealSlot?
+    @Binding var selectedMealSlotID: UUID?
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List {
+            if isCategoryFirst {
+                Button {
+                    selectedMealSlotID = nil
+                    dismiss()
+                } label: {
+                    HStack(spacing: 12) {
+                        Text("Auto")
+                        Spacer()
+                        if let fallbackMealSlot {
+                            Text(fallbackMealSlot.name)
+                                .foregroundStyle(.secondary)
+                        }
+                        if selectedMealSlotID == nil {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+
+            ForEach(mealSlots) { slot in
+                Button {
+                    selectedMealSlotID = slot.id
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(slot.name)
+                        Spacer()
+                        if selectedMealSlotID == slot.id {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .navigationTitle("Meal")
+    }
+}
+
+private struct QuickAddCategoryPicker: View {
+    let categories: [Core.Category]
+    @Binding var selectedCategoryID: UUID?
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List {
+            ForEach(categories) { category in
+                Button {
+                    selectedCategoryID = category.id
+                    dismiss()
+                } label: {
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(CategoryColorPalette.color(for: category))
+                            .frame(width: 10, height: 10)
+                        Text(category.name)
+                        Spacer()
+                        if selectedCategoryID == category.id {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .navigationTitle("Category")
     }
 }
 
@@ -2307,7 +2550,7 @@ struct EntryEditSheet: View {
     }
     private var availableFoodItems: [FoodItem] {
         let allowedCategoryIDs = Set(categories.map(\.id))
-        return foodItems.filter { allowedCategoryIDs.contains($0.categoryID) }
+        return foodItems.filter { allowedCategoryIDs.contains($0.categoryID) && !$0.kind.isComposite }
     }
     private var selectedFoodItem: FoodItem? {
         let foodID = selectedFoodID ?? entry.foodItemID

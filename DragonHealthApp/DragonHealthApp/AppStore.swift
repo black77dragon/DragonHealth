@@ -487,7 +487,10 @@ final class AppStore: ObservableObject {
                 amountValue: entry.amountValue,
                 amountUnitID: entry.amountUnitID,
                 notes: entry.notes,
-                foodItemID: entry.foodItemID
+                foodItemID: entry.foodItemID,
+                compositeGroupID: entry.compositeGroupID,
+                compositeFoodID: entry.compositeFoodID,
+                compositeFoodName: entry.compositeFoodName
             )
         }
         let normalizedLog = Core.DailyLog(id: log.id, date: day, entries: normalizedEntries)
@@ -516,7 +519,10 @@ final class AppStore: ObservableObject {
             amountValue: amountValue,
             amountUnitID: amountUnitID,
             notes: normalizedNotes(notes),
-            foodItemID: foodItemID
+            foodItemID: foodItemID,
+            compositeGroupID: entry.compositeGroupID,
+            compositeFoodID: entry.compositeFoodID,
+            compositeFoodName: entry.compositeFoodName
         )
         await persistDailyLog(log)
     }
@@ -536,7 +542,10 @@ final class AppStore: ObservableObject {
         amountValue: Double? = nil,
         amountUnitID: UUID? = nil,
         notes: String?,
-        foodItemID: UUID? = nil
+        foodItemID: UUID? = nil,
+        compositeGroupID: UUID? = nil,
+        compositeFoodID: UUID? = nil,
+        compositeFoodName: String? = nil
     ) async {
         let day = normalizedDay(for: date)
         var log = await fetchDailyLogForDay(day) ?? Core.DailyLog(date: day, entries: [])
@@ -549,10 +558,84 @@ final class AppStore: ObservableObject {
                 amountValue: amountValue,
                 amountUnitID: amountUnitID,
                 notes: normalizedNotes(notes),
-                foodItemID: foodItemID
+                foodItemID: foodItemID,
+                compositeGroupID: compositeGroupID,
+                compositeFoodID: compositeFoodID,
+                compositeFoodName: compositeFoodName
             )
         )
         await persistDailyLog(log)
+    }
+
+    func logFoodSelection(
+        date: Date,
+        mealSlotID: UUID,
+        categoryID: UUID?,
+        portion: Core.Portion,
+        amountValue: Double? = nil,
+        amountUnitID: UUID? = nil,
+        notes: String?,
+        foodItemID: UUID?
+    ) async {
+        let selectedFood = foodItemID.flatMap { id in
+            foodItems.first(where: { $0.id == id })
+        }
+        if let selectedFood, selectedFood.kind.isComposite {
+            await logCompositeFood(
+                selectedFood,
+                date: date,
+                mealSlotID: mealSlotID,
+                basePortion: portion,
+                notes: notes
+            )
+            return
+        }
+
+        let resolvedCategoryID = categoryID ?? selectedFood?.categoryID
+        guard let resolvedCategoryID else { return }
+        await logPortion(
+            date: date,
+            mealSlotID: mealSlotID,
+            categoryID: resolvedCategoryID,
+            portion: portion,
+            amountValue: amountValue,
+            amountUnitID: amountUnitID,
+            notes: notes,
+            foodItemID: foodItemID
+        )
+    }
+
+    private func logCompositeFood(
+        _ composite: Core.FoodItem,
+        date: Date,
+        mealSlotID: UUID,
+        basePortion: Core.Portion,
+        notes: String?
+    ) async {
+        let resolvedComponents = composite.compositeComponents.compactMap { component -> (Core.FoodItem, Double)? in
+            guard component.portionMultiplier > 0 else { return nil }
+            guard let item = foodItems.first(where: { $0.id == component.foodItemID && !$0.kind.isComposite }) else {
+                return nil
+            }
+            return (item, component.portionMultiplier)
+        }
+        guard !resolvedComponents.isEmpty else { return }
+
+        let groupID = UUID()
+        for (index, component) in resolvedComponents.enumerated() {
+            let scaledPortion = Core.Portion(basePortion.value * component.1)
+            await logPortion(
+                date: date,
+                mealSlotID: mealSlotID,
+                categoryID: component.0.categoryID,
+                portion: scaledPortion,
+                notes: index == 0 ? notes : nil,
+                foodItemID: component.0.id,
+                compositeGroupID: groupID,
+                compositeFoodID: composite.id,
+                compositeFoodName: composite.name
+            )
+        }
     }
 
     private func fetchDailyLogForDay(_ day: Date) async -> Core.DailyLog? {

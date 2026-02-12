@@ -439,6 +439,39 @@ Notes:
 - Items that originated from a composite show a small indicator (e.g., “from Hamburger”) and can deep-link to the composite detail sheet.
 ```
 
+#### Composite Meal + Category (Wireframe)
+
+```
+----------------------------------------------------------------
+Today
+----------------------------------------------------------------
+
+[ Meals ]
+----------------------------------------------------------------
+Lunch
+---------------------------------------------------------------
+[img] Hamburger                                   1 serving  v
+     Beef patty                      Protein      1 patty
+     Bun                             Carbs        1 bun
+     Lettuce + Tomato + Onion        Vegetables   1 serving
+---------------------------------------------------------------
+```
+
+```
+----------------------------------------------------------------
+Food Categories (Today)
+----------------------------------------------------------------
+Protein         Logged 1.0 / Target 3.0
+Carbs           Logged 1.0 / Target 2.0
+Vegetables      Logged 1.0 / Target 3.0
+----------------------------------------------------------------
+
+Tap: Protein
+----------------------------------------------------------------
+• 1 patty   Lunch   from Hamburger   [composite]
+----------------------------------------------------------------
+```
+
 ### History
 
 - Graphical date picker.

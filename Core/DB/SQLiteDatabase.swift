@@ -428,7 +428,8 @@ public actor SQLiteDatabase: DBGateway {
     public func fetchFoodItems() async throws -> [Core.FoodItem] {
         let sql = """
         SELECT id, name, category_id, portion, amount_per_portion, unit_id, notes, is_favorite, image_path,
-               image_remote_url, image_source, image_source_id, image_attribution_name, image_attribution_url, image_source_url
+               image_remote_url, image_source, image_source_id, image_attribution_name, image_attribution_url, image_source_url,
+               kind, composite_components_json
         FROM food_items
         ORDER BY is_favorite DESC, name ASC;
         """
@@ -451,6 +452,9 @@ public actor SQLiteDatabase: DBGateway {
             let imageAttributionName = readOptionalText(statement, index: 12)
             let imageAttributionURL = readOptionalText(statement, index: 13)
             let imageSourceURL = readOptionalText(statement, index: 14)
+            let kindRaw = readOptionalText(statement, index: 15) ?? Core.FoodItemKind.single.rawValue
+            let kind = Core.FoodItemKind(rawValue: kindRaw) ?? .single
+            let components = decodeCompositeComponents(from: readOptionalText(statement, index: 16))
             items.append(
                 Core.FoodItem(
                     id: id,
@@ -467,7 +471,9 @@ public actor SQLiteDatabase: DBGateway {
                     imageSourceID: imageSourceID,
                     imageAttributionName: imageAttributionName,
                     imageAttributionURL: imageAttributionURL,
-                    imageSourceURL: imageSourceURL
+                    imageSourceURL: imageSourceURL,
+                    kind: kind,
+                    compositeComponents: components
                 )
             )
         }
@@ -477,8 +483,9 @@ public actor SQLiteDatabase: DBGateway {
     public func upsertFoodItem(_ item: Core.FoodItem) async throws {
         let sql = """
         INSERT INTO food_items (id, name, category_id, portion, amount_per_portion, unit_id, notes, is_favorite, image_path,
-                                image_remote_url, image_source, image_source_id, image_attribution_name, image_attribution_url, image_source_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                image_remote_url, image_source, image_source_id, image_attribution_name, image_attribution_url, image_source_url,
+                                kind, composite_components_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             category_id = excluded.category_id,
@@ -493,7 +500,9 @@ public actor SQLiteDatabase: DBGateway {
             image_source_id = excluded.image_source_id,
             image_attribution_name = excluded.image_attribution_name,
             image_attribution_url = excluded.image_attribution_url,
-            image_source_url = excluded.image_source_url;
+            image_source_url = excluded.image_source_url,
+            kind = excluded.kind,
+            composite_components_json = excluded.composite_components_json;
         """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -512,6 +521,8 @@ public actor SQLiteDatabase: DBGateway {
         bindOptionalText(statement, index: 13, value: item.imageAttributionName)
         bindOptionalText(statement, index: 14, value: item.imageAttributionURL)
         bindOptionalText(statement, index: 15, value: item.imageSourceURL)
+        bindText(statement, index: 16, value: item.kind.rawValue)
+        bindOptionalText(statement, index: 17, value: encodeCompositeComponents(item.compositeComponents))
         try step(statement)
     }
 
@@ -551,8 +562,11 @@ public actor SQLiteDatabase: DBGateway {
             }
 
             let insertSQL = """
-            INSERT INTO daily_entries (id, day, meal_slot_id, category_id, portion, amount_value, amount_unit_id, food_item_id, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO daily_entries (
+                id, day, meal_slot_id, category_id, portion, amount_value, amount_unit_id, food_item_id, notes,
+                composite_group_id, composite_food_id, composite_food_name
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """
             for entry in uniqueEntries {
                 let statement = try prepare(insertSQL)
@@ -565,6 +579,9 @@ public actor SQLiteDatabase: DBGateway {
                 bindOptionalText(statement, index: 7, value: entry.amountUnitID?.uuidString)
                 bindOptionalText(statement, index: 8, value: entry.foodItemID?.uuidString)
                 bindOptionalText(statement, index: 9, value: entry.notes)
+                bindOptionalText(statement, index: 10, value: entry.compositeGroupID?.uuidString)
+                bindOptionalText(statement, index: 11, value: entry.compositeFoodID?.uuidString)
+                bindOptionalText(statement, index: 12, value: entry.compositeFoodName)
                 try step(statement)
                 sqlite3_finalize(statement)
             }
@@ -578,7 +595,8 @@ public actor SQLiteDatabase: DBGateway {
     public func fetchDailyLog(for date: Date) async throws -> Core.DailyLog? {
         let dayKey = DayBoundary(cutoffMinutes: 0).dayKey(for: date, calendar: calendar)
         let sql = """
-        SELECT id, meal_slot_id, category_id, portion, amount_value, amount_unit_id, food_item_id, notes
+        SELECT id, meal_slot_id, category_id, portion, amount_value, amount_unit_id, food_item_id, notes,
+               composite_group_id, composite_food_id, composite_food_name
         FROM daily_entries
         WHERE day = ?
         ORDER BY rowid ASC;
@@ -596,6 +614,9 @@ public actor SQLiteDatabase: DBGateway {
             let amountUnitID = readOptionalText(statement, index: 5).flatMap(UUID.init(uuidString:))
             let foodItemID = readOptionalText(statement, index: 6).flatMap(UUID.init(uuidString:))
             let notes = readOptionalText(statement, index: 7)
+            let compositeGroupID = readOptionalText(statement, index: 8).flatMap(UUID.init(uuidString:))
+            let compositeFoodID = readOptionalText(statement, index: 9).flatMap(UUID.init(uuidString:))
+            let compositeFoodName = readOptionalText(statement, index: 10)
             entries.append(
                 Core.DailyLogEntry(
                     id: id,
@@ -606,7 +627,10 @@ public actor SQLiteDatabase: DBGateway {
                     amountValue: amountValue,
                     amountUnitID: amountUnitID,
                     notes: notes,
-                    foodItemID: foodItemID
+                    foodItemID: foodItemID,
+                    compositeGroupID: compositeGroupID,
+                    compositeFoodID: compositeFoodID,
+                    compositeFoodName: compositeFoodName
                 )
             )
         }
@@ -852,12 +876,18 @@ public actor SQLiteDatabase: DBGateway {
             amount_value REAL,
             amount_unit_id TEXT,
             notes TEXT,
-            food_item_id TEXT
+            food_item_id TEXT,
+            composite_group_id TEXT,
+            composite_food_id TEXT,
+            composite_food_name TEXT
         );
         """, db: db)
         try? execute("ALTER TABLE daily_entries ADD COLUMN food_item_id TEXT;", db: db)
         try? execute("ALTER TABLE daily_entries ADD COLUMN amount_value REAL;", db: db)
         try? execute("ALTER TABLE daily_entries ADD COLUMN amount_unit_id TEXT;", db: db)
+        try? execute("ALTER TABLE daily_entries ADD COLUMN composite_group_id TEXT;", db: db)
+        try? execute("ALTER TABLE daily_entries ADD COLUMN composite_food_id TEXT;", db: db)
+        try? execute("ALTER TABLE daily_entries ADD COLUMN composite_food_name TEXT;", db: db)
         try execute("CREATE INDEX IF NOT EXISTS idx_daily_entries_day ON daily_entries(day);", db: db)
 
         try execute("""
@@ -876,7 +906,9 @@ public actor SQLiteDatabase: DBGateway {
             image_source_id TEXT,
             image_attribution_name TEXT,
             image_attribution_url TEXT,
-            image_source_url TEXT
+            image_source_url TEXT,
+            kind TEXT NOT NULL DEFAULT 'single',
+            composite_components_json TEXT
         );
         """, db: db)
 
@@ -997,7 +1029,11 @@ public actor SQLiteDatabase: DBGateway {
                 "portion": "REAL NOT NULL DEFAULT 0",
                 "amount_value": "REAL",
                 "amount_unit_id": "TEXT",
-                "notes": "TEXT"
+                "notes": "TEXT",
+                "food_item_id": "TEXT",
+                "composite_group_id": "TEXT",
+                "composite_food_id": "TEXT",
+                "composite_food_name": "TEXT"
             ],
             db: db
         )
@@ -1018,7 +1054,9 @@ public actor SQLiteDatabase: DBGateway {
                 "image_source_id": "TEXT",
                 "image_attribution_name": "TEXT",
                 "image_attribution_url": "TEXT",
-                "image_source_url": "TEXT"
+                "image_source_url": "TEXT",
+                "kind": "TEXT NOT NULL DEFAULT 'single'",
+                "composite_components_json": "TEXT"
             ],
             db: db
         )
@@ -1258,6 +1296,21 @@ public actor SQLiteDatabase: DBGateway {
         default:
             return .exact(min ?? max ?? 0)
         }
+    }
+
+    private func encodeCompositeComponents(_ components: [Core.FoodComponent]) -> String? {
+        guard !components.isEmpty else { return nil }
+        do {
+            let data = try JSONEncoder().encode(components)
+            return String(data: data, encoding: .utf8)
+        } catch {
+            return nil
+        }
+    }
+
+    private func decodeCompositeComponents(from json: String?) -> [Core.FoodComponent] {
+        guard let json, !json.isEmpty, let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([Core.FoodComponent].self, from: data)) ?? []
     }
 
     private func encodeMealSlotTimings(_ timings: [Core.MealSlotTiming]) -> String {

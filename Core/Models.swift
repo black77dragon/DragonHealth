@@ -97,6 +97,9 @@ public struct DailyLogEntry: Identifiable, Hashable, Sendable {
     public let amountUnitID: UUID?
     public let notes: String?
     public let foodItemID: UUID?
+    public let compositeGroupID: UUID?
+    public let compositeFoodID: UUID?
+    public let compositeFoodName: String?
 
     public init(
         id: UUID = UUID(),
@@ -107,7 +110,10 @@ public struct DailyLogEntry: Identifiable, Hashable, Sendable {
         amountValue: Double? = nil,
         amountUnitID: UUID? = nil,
         notes: String? = nil,
-        foodItemID: UUID? = nil
+        foodItemID: UUID? = nil,
+        compositeGroupID: UUID? = nil,
+        compositeFoodID: UUID? = nil,
+        compositeFoodName: String? = nil
     ) {
         self.id = id
         self.date = date
@@ -118,6 +124,9 @@ public struct DailyLogEntry: Identifiable, Hashable, Sendable {
         self.amountUnitID = amountUnitID
         self.notes = notes
         self.foodItemID = foodItemID
+        self.compositeGroupID = compositeGroupID
+        self.compositeFoodID = compositeFoodID
+        self.compositeFoodName = compositeFoodName
     }
 }
 
@@ -198,6 +207,25 @@ public enum FoodImageSource: String, Hashable, Sendable {
     case unsplash
 }
 
+public enum FoodItemKind: String, Hashable, Sendable {
+    case single
+    case composite
+
+    public var isComposite: Bool {
+        self == .composite
+    }
+}
+
+public struct FoodComponent: Codable, Hashable, Sendable {
+    public var foodItemID: UUID
+    public var portionMultiplier: Double
+
+    public init(foodItemID: UUID, portionMultiplier: Double) {
+        self.foodItemID = foodItemID
+        self.portionMultiplier = Portion.roundToIncrement(max(0, portionMultiplier))
+    }
+}
+
 public struct FoodItem: Identifiable, Hashable, Sendable {
     public let id: UUID
     public var name: String
@@ -214,6 +242,8 @@ public struct FoodItem: Identifiable, Hashable, Sendable {
     public var imageAttributionName: String?
     public var imageAttributionURL: String?
     public var imageSourceURL: String?
+    public var kind: FoodItemKind
+    public var compositeComponents: [FoodComponent]
 
     public init(
         id: UUID = UUID(),
@@ -230,7 +260,9 @@ public struct FoodItem: Identifiable, Hashable, Sendable {
         imageSourceID: String? = nil,
         imageAttributionName: String? = nil,
         imageAttributionURL: String? = nil,
-        imageSourceURL: String? = nil
+        imageSourceURL: String? = nil,
+        kind: FoodItemKind = .single,
+        compositeComponents: [FoodComponent] = []
     ) {
         self.id = id
         self.name = name
@@ -247,6 +279,8 @@ public struct FoodItem: Identifiable, Hashable, Sendable {
         self.imageAttributionName = imageAttributionName
         self.imageAttributionURL = imageAttributionURL
         self.imageSourceURL = imageSourceURL
+        self.kind = kind
+        self.compositeComponents = compositeComponents
     }
 }
 
