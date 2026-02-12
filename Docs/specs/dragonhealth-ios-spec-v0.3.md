@@ -337,6 +337,8 @@ Migration:
   - swipe the opposite direction to edit an item
 - Per-category day detail screen includes a "+" action to Quick Add a new item for that category on the same day (category is prefilled).
 - Per-meal summaries with scroll-to-meal support.
+- Composite foods show as a single row in meal summaries with an expand/collapse affordance to reveal component entries.
+- Component entries in category detail lists show an indicator that they came from a composite (e.g., label or badge with composite name).
 - Display settings for category and meal summary styles.
 - Quick Add flow: meal slot + category + portion or amount (when available) + optional notes.
 - Food library picker to prefill category and portion.
@@ -434,13 +436,14 @@ Tue, Jan 31 (Today)
 Notes:
 - "+" opens Quick Add with day + category prefilled
 - Empty state shows “No items yet” with a centered "+" CTA
+- Items that originated from a composite show a small indicator (e.g., “from Hamburger”) and can deep-link to the composite detail sheet.
 ```
 
 ### History
 
 - Graphical date picker.
 - Day-level adherence summary.
-- Per-meal entry lists with edit and delete.
+- Per-meal entry lists with edit and delete (composite foods appear as a grouped row with expandable components).
 - Per-category totals and target status.
 - Quick Add for historical days.
 
@@ -500,6 +503,11 @@ Weekly reduction required                       -0.32 kg
 - Optional food photos (choose from photo library or search Unsplash).
 - Unsplash photos store attribution metadata (photographer + source link).
 - Food library items can prefill Quick Add.
+- Composite foods / recipes:
+  - Composite items are built from multiple existing foods with per-serving quantities.
+  - Logging a composite expands into atomic entries for each component (totals and scoring stay category-based).
+  - Composite items can have their own photo; this photo is used in library and meal lists.
+  - Component foods can still have their own photos (optional).
 
 ### Documents
 
@@ -561,6 +569,5 @@ Weekly reduction required                       -0.32 kg
 - Notifications and reminders
 - Widgets / lock screen quick add
 - Meal photos per log entry
-- Composite foods / recipes
 - Streak analytics
 - Adherence heatmaps or trend charts

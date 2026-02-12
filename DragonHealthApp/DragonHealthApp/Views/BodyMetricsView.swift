@@ -119,6 +119,8 @@ struct BodyMetricsView: View {
                 } label: {
                     Label("Add", systemImage: "plus")
                 }
+                .labelStyle(.iconOnly)
+                .glassButton(.icon)
             }
         }
         .sheet(isPresented: $showingAdd) {
@@ -568,6 +570,7 @@ private struct AppleHealthSyncCard: View {
             } label: {
                 Label(isSyncing ? "Syncing..." : "Sync Now", systemImage: "arrow.triangle.2.circlepath")
             }
+            .glassButton(.text)
             .disabled(isSyncing)
         }
         .padding(12)
@@ -930,6 +933,7 @@ private struct BodyMetricEntrySheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -946,6 +950,7 @@ private struct BodyMetricEntrySheet: View {
                         )
                         dismiss()
                     }
+                    .glassButton(.text)
                 }
             }
         }

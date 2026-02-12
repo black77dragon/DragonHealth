@@ -69,6 +69,7 @@ struct CategoryDetailView: View {
                     await MainActor.run { dismiss() }
                 }
             }
+            .glassButton(.text)
         }
     }
 }
@@ -93,6 +94,7 @@ struct MealSlotDetailView: View {
             Button("Save") {
                 Task { await store.saveMealSlot(mealSlot) }
             }
+            .glassButton(.text)
         }
     }
 }
@@ -156,6 +158,7 @@ struct CategoryEditorSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -170,6 +173,7 @@ struct CategoryEditorSheet: View {
                         )
                         dismiss()
                     }
+                    .glassButton(.text)
                     .disabled(name.isEmpty || unit.isEmpty)
                 }
             }
@@ -196,12 +200,14 @@ struct MealSlotEditorSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         onSave(MealSlot(name: name, sortOrder: order))
                         dismiss()
                     }
+                    .glassButton(.text)
                     .disabled(name.isEmpty)
                 }
             }

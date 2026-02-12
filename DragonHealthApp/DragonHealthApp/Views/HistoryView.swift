@@ -1,5 +1,8 @@
 import SwiftUI
 import Core
+#if canImport(Charts)
+import Charts
+#endif
 
 struct HistoryView: View {
     @EnvironmentObject private var store: AppStore
@@ -9,13 +12,26 @@ struct HistoryView: View {
     @State private var adherence: DailyAdherenceSummary?
     @State private var scoreSummary: DailyScoreSummary?
     @State private var calendarIndicators: [String: HistoryDayIndicator] = [:]
+    @State private var scoreHistoryPoints: [ScoreHistoryPoint] = []
     @State private var visibleMonthDate = Date()
     @State private var showingQuickAdd = false
     @State private var editingEntry: DailyLogEntry?
+    @AppStorage("history.scoreTimeFrame") private var scoreTimeFrameRaw: String = HistoryScoreTimeFrame.month.rawValue
 
     private let totalsCalculator = DailyTotalsCalculator()
     private let evaluator = DailyTotalEvaluator()
     private let scoreEvaluator = DailyScoreEvaluator()
+
+    private var scoreTimeFrame: HistoryScoreTimeFrame {
+        HistoryScoreTimeFrame(rawValue: scoreTimeFrameRaw) ?? .month
+    }
+
+    private var scoreTimeFrameBinding: Binding<HistoryScoreTimeFrame> {
+        Binding(
+            get: { HistoryScoreTimeFrame(rawValue: scoreTimeFrameRaw) ?? .month },
+            set: { scoreTimeFrameRaw = $0.rawValue }
+        )
+    }
 
     var body: some View {
         ScrollView {
@@ -24,6 +40,7 @@ struct HistoryView: View {
 
                 HistoryCalendarView(
                     calendar: store.appCalendar,
+                    currentDay: store.currentDay,
                     selectedDate: $selectedDate,
                     indicators: calendarIndicators,
                     onVisibleMonthChanged: { newMonthDate in
@@ -34,11 +51,16 @@ struct HistoryView: View {
                         visibleMonthDate = newMonthDate
                     }
                 )
+                HistoryDailyScoreCard(
+                    date: selectedDate,
+                    adherence: adherence,
+                    scoreSummary: scoreSummary
+                )
                 HistoryCalendarLegend()
-
-                if let adherence {
-                    HistorySummaryCard(adherence: adherence, scoreSummary: scoreSummary)
-                }
+                HistoryScoreHistorySection(
+                    timeFrame: scoreTimeFrameBinding,
+                    points: scoreHistoryPoints
+                )
 
                 if !entries.isEmpty {
                     HistoryEntriesView(
@@ -77,6 +99,7 @@ struct HistoryView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .glassButton(.icon)
                 .accessibilityLabel("Add entry")
             }
         }
@@ -135,9 +158,11 @@ struct HistoryView: View {
         .task { visibleMonthDate = selectedDate }
         .task(id: selectedDate) { await loadSelectedDay() }
         .task(id: visibleMonthDate) { await loadCalendarIndicators(for: visibleMonthDate) }
+        .task(id: scoreTimeFrameRaw) { await loadScoreHistory() }
         .task(id: store.refreshToken) {
             await loadSelectedDay()
             await loadCalendarIndicators(for: visibleMonthDate)
+            await loadScoreHistory()
         }
     }
 
@@ -159,6 +184,14 @@ struct HistoryView: View {
         )
     }
 
+    private func loadScoreHistory() async {
+        let calendar = store.appCalendar
+        let referenceDate = store.currentDay
+        let startDate = scoreTimeFrame.startDate(referenceDate: referenceDate, calendar: calendar) ?? Date.distantPast
+        let entries = await store.fetchScoreHistory(start: startDate, end: referenceDate)
+        scoreHistoryPoints = entries.map { ScoreHistoryPoint(date: $0.date, value: $0.score) }
+    }
+
     private func loadCalendarIndicators(for referenceDate: Date) async {
         let range = calendarIndicatorRange(for: referenceDate)
         calendarIndicators = await store.fetchHistoryIndicators(start: range.start, end: range.end)
@@ -178,27 +211,46 @@ struct HistoryView: View {
     }
 }
 
-private struct HistorySummaryCard: View {
-    let adherence: DailyAdherenceSummary
+private struct HistoryDailyScoreCard: View {
+    let date: Date
+    let adherence: DailyAdherenceSummary?
     let scoreSummary: DailyScoreSummary?
 
     var body: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(adherence.allTargetsMet ? "On Target" : "Off Target")
-                    .font(.headline)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Daily Score")
+                        .font(.headline)
+                    Text(date, style: .date)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let scoreSummary {
+                    ScoreBadge(score: scoreSummary.overallScore)
+                } else {
+                    Text("--")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let adherence {
+                HStack {
+                    Text(adherence.allTargetsMet ? "On Target" : "Off Target")
+                        .font(.subheadline)
+                    Spacer()
+                    Image(systemName: adherence.allTargetsMet ? "checkmark.seal.fill" : "xmark.seal")
+                        .foregroundStyle(adherence.allTargetsMet ? .green : .orange)
+                }
                 Text("\(adherence.categoryResults.filter { $0.targetMet }.count) of \(adherence.categoryResults.count) categories met")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 8) {
-                if let scoreSummary {
-                    ScoreBadge(score: scoreSummary.overallScore)
-                }
-                Image(systemName: adherence.allTargetsMet ? "checkmark.seal.fill" : "xmark.seal")
-                    .foregroundStyle(adherence.allTargetsMet ? .green : .orange)
-                    .font(.title2)
+            } else {
+                Text("No score yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(12)
@@ -226,6 +278,167 @@ private struct HistoryCalendarLegend: View {
                 .frame(width: 8, height: 8)
             Text(label)
         }
+    }
+}
+
+private struct HistoryScoreHistorySection: View {
+    @Binding var timeFrame: HistoryScoreTimeFrame
+    let points: [ScoreHistoryPoint]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Score History")
+                .font(.headline)
+            HistoryTimeFramePicker(timeFrame: $timeFrame)
+            ScoreHistoryChartCard(points: points)
+        }
+    }
+}
+
+private struct HistoryTimeFramePicker: View {
+    @Binding var timeFrame: HistoryScoreTimeFrame
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Time Frame")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker("Time Frame", selection: $timeFrame) {
+                ForEach(HistoryScoreTimeFrame.allCases) { frame in
+                    Text(frame.shortLabel)
+                        .accessibilityLabel(frame.fullLabel)
+                        .tag(frame)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+}
+
+private enum HistoryScoreTimeFrame: String, CaseIterable, Identifiable {
+    case week
+    case month
+    case threeMonths
+    case sixMonths
+    case all
+
+    var id: String { rawValue }
+
+    var shortLabel: String {
+        switch self {
+        case .week: return "1W"
+        case .month: return "1M"
+        case .threeMonths: return "3M"
+        case .sixMonths: return "6M"
+        case .all: return "All"
+        }
+    }
+
+    var fullLabel: String {
+        switch self {
+        case .week: return "1 week"
+        case .month: return "1 month"
+        case .threeMonths: return "3 months"
+        case .sixMonths: return "6 months"
+        case .all: return "All time"
+        }
+    }
+
+    func startDate(referenceDate: Date, calendar: Calendar) -> Date? {
+        guard let rangeComponent else { return nil }
+        return calendar.date(
+            byAdding: rangeComponent.0,
+            value: rangeComponent.1,
+            to: referenceDate
+        )
+    }
+
+    private var rangeComponent: (Calendar.Component, Int)? {
+        switch self {
+        case .week: return (.day, -6)
+        case .month: return (.month, -1)
+        case .threeMonths: return (.month, -3)
+        case .sixMonths: return (.month, -6)
+        case .all: return nil
+        }
+    }
+}
+
+private struct ScoreHistoryPoint: Identifiable {
+    let date: Date
+    let value: Double
+
+    var id: Date { date }
+}
+
+private struct ScoreHistoryChartCard: View {
+    let points: [ScoreHistoryPoint]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Score")
+                    .font(.headline)
+                Spacer()
+                Text(points.last.map { "\(Int($0.value.rounded()))" } ?? "--")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if points.isEmpty {
+                Text("No score history yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                #if canImport(Charts)
+                if #available(iOS 16.0, *) {
+                    scoreChart()
+                } else {
+                    Text("Charts require iOS 16 or later.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                #else
+                Text("Charts are unavailable on this device.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                #endif
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+
+    @ViewBuilder
+    private func scoreChart() -> some View {
+        let tint = ScoreColor.color(for: points.last?.value ?? 0)
+        Chart {
+            ForEach(points) { point in
+                LineMark(
+                    x: .value("Date", point.date),
+                    y: .value("Score", point.value)
+                )
+                .foregroundStyle(tint)
+                .interpolationMethod(.catmullRom)
+
+                PointMark(
+                    x: .value("Date", point.date),
+                    y: .value("Score", point.value)
+                )
+                .foregroundStyle(tint)
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 4))
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading)
+        }
+        .chartYScale(domain: 0...100)
+        .frame(height: 160)
     }
 }
 

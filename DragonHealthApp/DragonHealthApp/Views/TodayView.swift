@@ -111,17 +111,22 @@ struct TodayView: View {
                 } label: {
                     Image(systemName: "gearshape")
                 }
+                .glassButton(.icon)
                 .accessibilityLabel("Display settings")
                 Button {
                     showingQuickAdd = true
                 } label: {
                     Label("Quick Add", systemImage: "plus")
                 }
+                .labelStyle(.iconOnly)
+                .glassButton(.icon)
                 Button {
                     showingVoiceLog = true
                 } label: {
                     Label("Voice Log", systemImage: "mic")
                 }
+                .labelStyle(.iconOnly)
+                .glassButton(.icon)
             }
         }
         .sheet(isPresented: $showingDisplaySettings) {
@@ -317,19 +322,25 @@ private struct TodayHeaderView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let scoreSummary {
-                ScoreBadge(score: scoreSummary.overallScore)
-            }
-            if let adherence {
+            if let scoreSummary, let adherence {
                 let metCount = adherence.categoryResults.filter { $0.targetMet }.count
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text("\(metCount) of \(adherence.categoryResults.count) on track")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(adherence.allTargetsMet ? "All targets met" : "Targets in progress")
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    ScoreBadge(score: scoreSummary.overallScore)
+                    Text("-")
                         .font(.subheadline)
-                        .foregroundStyle(adherence.allTargetsMet ? .green : .secondary)
+                        .foregroundStyle(.secondary)
+                    Text("\(metCount)/\(adherence.categoryResults.count) on track")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+            } else if let scoreSummary {
+                ScoreBadge(score: scoreSummary.overallScore)
+            } else if let adherence {
+                let metCount = adherence.categoryResults.filter { $0.targetMet }.count
+                Text("\(metCount)/\(adherence.categoryResults.count) on track")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             } else {
                 Text("No data yet")
                     .font(.subheadline)
@@ -345,6 +356,18 @@ private struct TodayHeaderView: View {
     }
 }
 
+private enum TodayTileMetrics {
+    static let gridSpacing: CGFloat = 10
+    static let compactHeight: CGFloat = 124
+    static let capsuleHeight: CGFloat = 60
+    static let tilePadding: CGFloat = 8
+    static let capsulePadding: CGFloat = 6
+    static let borderWidth: CGFloat = 1.0
+    static let cornerRadius: CGFloat = 6
+    static let missingStackedFontSize: CGFloat = 19
+    static let missingInlineFontSize: CGFloat = 16
+}
+
 private struct CategoryOverviewGrid<Destination: View>: View {
     let categories: [Core.Category]
     let totals: [UUID: Double]
@@ -353,16 +376,16 @@ private struct CategoryOverviewGrid<Destination: View>: View {
     private var columns: [GridItem] {
         switch style {
         case .compactRings:
-            return [GridItem(.adaptive(minimum: 130), spacing: 12)]
+            return [GridItem(.adaptive(minimum: 130), spacing: TodayTileMetrics.gridSpacing)]
         case .inlineLabel:
-            return [GridItem(.adaptive(minimum: 200), spacing: 12)]
+            return [GridItem(.adaptive(minimum: 200), spacing: TodayTileMetrics.gridSpacing)]
         case .capsuleRows:
-            return [GridItem(.adaptive(minimum: 180), spacing: 12)]
+            return [GridItem(.adaptive(minimum: 180), spacing: TodayTileMetrics.gridSpacing)]
         }
     }
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
+        LazyVGrid(columns: columns, spacing: TodayTileMetrics.gridSpacing) {
             ForEach(categories) { category in
                 let total = totals[category.id] ?? 0
                 switch style {
@@ -830,10 +853,11 @@ private struct CategoryRingTile: View {
                 MissingTargetValue(text: missingText, style: .stacked)
             }
         }
-        .padding(10)
+        .padding(TodayTileMetrics.tilePadding)
+        .frame(maxWidth: .infinity, minHeight: TodayTileMetrics.compactHeight, maxHeight: TodayTileMetrics.compactHeight, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(.systemGray5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius, style: .continuous)
+                .stroke(Color(.systemGray5), lineWidth: TodayTileMetrics.borderWidth)
         )
         .contextMenu {
             Text(category.name)
@@ -874,10 +898,11 @@ private struct CategoryInlineTile: View {
             Spacer()
             StatusBadge(status: progress.status)
         }
-        .padding(10)
+        .padding(TodayTileMetrics.tilePadding)
+        .frame(maxWidth: .infinity, minHeight: TodayTileMetrics.compactHeight, maxHeight: TodayTileMetrics.compactHeight, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(.systemGray5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius, style: .continuous)
+                .stroke(Color(.systemGray5), lineWidth: TodayTileMetrics.borderWidth)
         )
         .contextMenu {
             Text(category.name)
@@ -920,10 +945,11 @@ private struct CategoryCapsuleTile: View {
             Spacer()
             StatusBadge(status: progress.status)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, TodayTileMetrics.tilePadding)
+        .padding(.vertical, TodayTileMetrics.capsulePadding)
+        .frame(maxWidth: .infinity, minHeight: TodayTileMetrics.capsuleHeight, maxHeight: TodayTileMetrics.capsuleHeight, alignment: .center)
         .background(
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius, style: .continuous)
                 .fill(accentColor.opacity(0.12))
         )
         .contextMenu {
@@ -957,8 +983,7 @@ private struct MissingTargetValue: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(text)
-                    .font(.title3)
-                    .fontWeight(.semibold)
+                    .font(.system(size: TodayTileMetrics.missingStackedFontSize, weight: .semibold))
                     .foregroundStyle(.red)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -969,8 +994,7 @@ private struct MissingTargetValue: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(text)
-                    .font(.headline)
-                    .fontWeight(.semibold)
+                    .font(.system(size: TodayTileMetrics.missingInlineFontSize, weight: .semibold))
                     .foregroundStyle(.red)
             }
             .lineLimit(1)
@@ -1027,11 +1051,11 @@ private struct MealOverviewGrid: View {
     let mealSlots: [MealSlot]
     let entries: [DailyLogEntry]
     let categories: [Core.Category]
-    private let columns = [GridItem(.adaptive(minimum: 130), spacing: 12)]
+    private let columns = [GridItem(.adaptive(minimum: 130), spacing: TodayTileMetrics.gridSpacing)]
 
     var body: some View {
         let enabledCategories = categories.filter { $0.isEnabled }
-        LazyVGrid(columns: columns, spacing: 12) {
+        LazyVGrid(columns: columns, spacing: TodayTileMetrics.gridSpacing) {
             ForEach(mealSlots) { slot in
                 let slotEntries = entries.filter { $0.mealSlotID == slot.id }
                 let total = slotEntries.reduce(0) { $0 + $1.portion.value }
@@ -1080,10 +1104,11 @@ private struct MealOverviewCard: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(10)
+        .padding(TodayTileMetrics.tilePadding)
+        .frame(maxWidth: .infinity, minHeight: TodayTileMetrics.compactHeight, maxHeight: TodayTileMetrics.compactHeight, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(.systemGray5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius, style: .continuous)
+                .stroke(Color(.systemGray5), lineWidth: TodayTileMetrics.borderWidth)
         )
         .contextMenu {
             Text(mealSlot.name)
@@ -1434,6 +1459,7 @@ private struct EntryDetailSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .glassButton(.text)
                 }
             }
         }
@@ -1681,6 +1707,7 @@ private struct TodayDisplaySettingsSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .glassButton(.text)
                 }
             }
         }
@@ -1841,6 +1868,7 @@ struct QuickAddSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
@@ -1863,6 +1891,7 @@ struct QuickAddSheet: View {
                         )
                         dismiss()
                     }
+                    .glassButton(.text)
                     .disabled(!canSave)
                 }
             }
@@ -2437,6 +2466,7 @@ struct EntryEditSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -2460,6 +2490,7 @@ struct EntryEditSheet: View {
                         )
                         dismiss()
                     }
+                    .glassButton(.text)
                     .disabled(!canSave)
                 }
             }
@@ -2557,7 +2588,7 @@ private struct PortionWheelControl: View {
                     .foregroundStyle(.red)
                     .padding(6)
             }
-            .buttonStyle(.borderless)
+            .glassButton(.icon)
             .accessibilityLabel("Decrease by tenth portion")
 
             Picker("Portions", selection: $portion) {
@@ -2577,7 +2608,7 @@ private struct PortionWheelControl: View {
                     .foregroundStyle(.green)
                     .padding(6)
             }
-            .buttonStyle(.borderless)
+            .glassButton(.icon)
             .accessibilityLabel("Increase by tenth portion")
         }
     }

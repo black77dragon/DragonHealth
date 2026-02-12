@@ -3,6 +3,11 @@ import Combine
 import Core
 import CoreDB
 
+struct ScoreHistoryEntry: Hashable, Sendable {
+    let date: Date
+    let score: Double
+}
+
 @MainActor
 final class AppStore: ObservableObject {
     enum LoadState: Equatable {
@@ -441,6 +446,32 @@ final class AppStore: ObservableObject {
         } catch {
             loadState = .failed("Log error: \(error.localizedDescription)")
             return [:]
+        }
+    }
+
+    func fetchScoreHistory(start: Date, end: Date) async -> [ScoreHistoryEntry] {
+        guard let db else { return [] }
+        let evaluator = DailyScoreEvaluator()
+        let rangeStart = min(start, end)
+        let rangeEnd = max(start, end)
+        do {
+            let totalsByDay = try await db.fetchDailyTotalsByDay(start: rangeStart, end: rangeEnd)
+            let calendar = appCalendar
+            var entries: [ScoreHistoryEntry] = []
+            for (dayKey, totalsByCategoryID) in totalsByDay {
+                guard let day = DayKeyParser.date(from: dayKey, timeZone: calendar.timeZone) else { continue }
+                let summary = evaluator.evaluate(
+                    categories: categories,
+                    totalsByCategoryID: totalsByCategoryID,
+                    profilesByCategoryID: scoreProfiles,
+                    compensationRules: compensationRules
+                )
+                entries.append(ScoreHistoryEntry(date: day, score: summary.overallScore))
+            }
+            return entries.sorted(by: { $0.date < $1.date })
+        } catch {
+            loadState = .failed("Log error: \(error.localizedDescription)")
+            return []
         }
     }
 

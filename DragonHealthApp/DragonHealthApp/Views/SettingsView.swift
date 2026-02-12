@@ -86,6 +86,7 @@ struct SettingsView: View {
                     } label: {
                         Label(backupManager.isBackingUp ? "Backing Up..." : "Back Up Now", systemImage: "icloud.and.arrow.up")
                     }
+                    .glassButton(.text)
                     .disabled(backupManager.isBackingUp)
                 } else {
                     Text("iCloud is not available. Sign in to iCloud to enable backups.")
@@ -130,6 +131,7 @@ struct SettingsView: View {
                 } label: {
                     Label(healthSyncManager.isSyncing ? "Syncing..." : "Sync Now", systemImage: "arrow.triangle.2.circlepath")
                 }
+                .glassButton(.text)
                 .disabled(healthSyncManager.isSyncing)
             }
 
@@ -156,6 +158,7 @@ struct SettingsView: View {
                 } label: {
                     Label("Add Meeting", systemImage: "plus")
                 }
+                .glassButton(.text)
             }
         }
         .navigationTitle("Settings")
@@ -251,6 +254,7 @@ private struct CareMeetingSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -263,6 +267,7 @@ private struct CareMeetingSheet: View {
                         )
                         dismiss()
                     }
+                    .glassButton(.text)
                     .disabled(trimmedNotes.isEmpty)
                 }
             }

@@ -152,6 +152,7 @@ private struct UnsplashSettingsView: View {
                     }
                     statusMessage = "Saved to Keychain."
                 }
+                .glassButton(.text)
 
                 Button("Clear Unsplash Keys", role: .destructive) {
                     _ = KeychainStore.delete(.unsplashApplicationID)
@@ -160,6 +161,7 @@ private struct UnsplashSettingsView: View {
                     accessKey = ""
                     statusMessage = "Cleared."
                 }
+                .glassButton(.text)
             }
 
             if let statusMessage {
@@ -219,6 +221,7 @@ struct ProfileDetailsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
                             Label("Choose Photo", systemImage: "person.crop.circle.badge.plus")
+                                .glassLabel(.text)
                         }
                         if profileImage != nil {
                             Button(role: .destructive) {
@@ -226,6 +229,7 @@ struct ProfileDetailsView: View {
                             } label: {
                                 Label("Remove Photo", systemImage: "trash")
                             }
+                            .glassButton(.text)
                         }
                     }
                 }
@@ -272,6 +276,7 @@ struct ProfileDetailsView: View {
                     Button("Clear Target Date") {
                         updateSettingsValue { $0.targetWeightDate = nil }
                     }
+                    .glassButton(.compact)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
@@ -473,6 +478,7 @@ struct CareTeamLogView: View {
                 } label: {
                     Label("Add Meeting", systemImage: "plus")
                 }
+                .glassButton(.text)
             }
         }
         .navigationTitle("Meeting Log")
@@ -567,6 +573,7 @@ struct CategoriesView: View {
                 } label: {
                     Label("Add Category", systemImage: "plus")
                 }
+                .glassButton(.text)
             }
         }
         .navigationTitle("Categories")
@@ -609,6 +616,7 @@ struct MealSlotsView: View {
                 } label: {
                     Label("Add Meal Slot", systemImage: "plus")
                 }
+                .glassButton(.text)
             }
         }
         .navigationTitle("Meal Slots")
@@ -654,6 +662,7 @@ struct BackupSettingsView: View {
                     } label: {
                         Label(backupManager.isBackingUp ? "Backing Up..." : "Back Up Now", systemImage: "icloud.and.arrow.up")
                     }
+                    .glassButton(.text)
                     .disabled(backupManager.isBackingUp || backupManager.isRestoring)
                 } else {
                     Text("iCloud is not available. Sign in to iCloud to enable backups.")
@@ -726,6 +735,7 @@ struct RestoreBackupView: View {
                                 } label: {
                                     Label(backupManager.isRestoring ? "Restoring..." : "Restore", systemImage: "arrow.counterclockwise")
                                 }
+                                .glassButton(.text)
                                 .disabled(!backup.isCompatible || backupManager.isRestoring || backupManager.isBackingUp)
                             }
                             .padding(.vertical, 4)
@@ -810,6 +820,7 @@ struct HealthSyncSettingsView: View {
                 } label: {
                     Label(healthSyncManager.isSyncing ? "Syncing..." : "Sync Now", systemImage: "arrow.triangle.2.circlepath")
                 }
+                .glassButton(.text)
                 .disabled(healthSyncManager.isSyncing)
             }
         }
@@ -1009,6 +1020,7 @@ private struct CareMeetingSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -1021,6 +1033,7 @@ private struct CareMeetingSheet: View {
                         )
                         dismiss()
                     }
+                    .glassButton(.text)
                     .disabled(trimmedNotes.isEmpty)
                 }
             }

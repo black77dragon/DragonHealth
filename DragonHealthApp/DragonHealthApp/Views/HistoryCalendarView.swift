@@ -1,102 +1,211 @@
 import SwiftUI
-import UIKit
 import Core
 
 enum HistoryDayIndicator: Hashable {
     case score(Double)
 }
 
-struct HistoryCalendarView: UIViewRepresentable {
+struct HistoryCalendarView: View {
     let calendar: Calendar
+    let currentDay: Date
     @Binding var selectedDate: Date
     let indicators: [String: HistoryDayIndicator]
     let onVisibleMonthChanged: (Date) -> Void
 
-    func makeUIView(context: Context) -> UICalendarView {
-        let view = UICalendarView()
-        view.calendar = calendar
-        view.locale = calendar.locale ?? .current
-        view.delegate = context.coordinator
+    @State private var displayedMonth: Date
 
-        let selection = UICalendarSelectionSingleDate(delegate: context.coordinator)
-        context.coordinator.selection = selection
-        view.selectionBehavior = selection
-
-        let selectedComponents = calendar.dateComponents([.year, .month, .day], from: selectedDate)
-        selection.setSelected(selectedComponents, animated: false)
-
-        return view
+    init(
+        calendar: Calendar,
+        currentDay: Date,
+        selectedDate: Binding<Date>,
+        indicators: [String: HistoryDayIndicator],
+        onVisibleMonthChanged: @escaping (Date) -> Void
+    ) {
+        self.calendar = calendar
+        self.currentDay = currentDay
+        self._selectedDate = selectedDate
+        self.indicators = indicators
+        self.onVisibleMonthChanged = onVisibleMonthChanged
+        let monthStart = Self.monthStart(for: selectedDate.wrappedValue, calendar: calendar)
+        _displayedMonth = State(initialValue: monthStart)
     }
 
-    func updateUIView(_ uiView: UICalendarView, context: Context) {
-        context.coordinator.parent = self
-        context.coordinator.calendar = calendar
-        context.coordinator.indicators = indicators
-        context.coordinator.onVisibleMonthChanged = onVisibleMonthChanged
-
-        uiView.calendar = calendar
-        uiView.locale = calendar.locale ?? .current
-
-        let selectedComponents = calendar.dateComponents([.year, .month, .day], from: selectedDate)
-        if context.coordinator.selection?.selectedDate != selectedComponents {
-            context.coordinator.selection?.setSelected(selectedComponents, animated: false)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            weekdayRow
+            monthGrid
         }
-
-        let newKeys = Set(indicators.keys)
-        let reloadKeys = newKeys.union(context.coordinator.indicatorKeys)
-        if !reloadKeys.isEmpty {
-            let reloadComponents = reloadKeys.compactMap { key -> DateComponents? in
-                guard let date = DayKeyParser.date(from: key, timeZone: calendar.timeZone) else { return nil }
-                return calendar.dateComponents([.year, .month, .day], from: date)
-            }
-            uiView.reloadDecorations(forDateComponents: reloadComponents, animated: false)
+        .onAppear { onVisibleMonthChanged(displayedMonth) }
+        .onChange(of: displayedMonth) { newValue in
+            onVisibleMonthChanged(newValue)
         }
-        context.coordinator.indicatorKeys = newKeys
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    final class Coordinator: NSObject, UICalendarViewDelegate, UICalendarSelectionSingleDateDelegate {
-        var parent: HistoryCalendarView
-        var selection: UICalendarSelectionSingleDate?
-        var indicatorKeys = Set<String>()
-        var indicators: [String: HistoryDayIndicator]
-        var calendar: Calendar
-        var onVisibleMonthChanged: (Date) -> Void
-
-        init(_ parent: HistoryCalendarView) {
-            self.parent = parent
-            self.indicators = parent.indicators
-            self.calendar = parent.calendar
-            self.onVisibleMonthChanged = parent.onVisibleMonthChanged
-        }
-
-        func dateSelection(_ selection: UICalendarSelectionSingleDate, didSelectDate dateComponents: DateComponents?) {
-            guard let dateComponents,
-                  let date = calendar.date(from: dateComponents) else { return }
-            parent.selectedDate = date
-        }
-
-        func calendarView(_ calendarView: UICalendarView, decorationFor dateComponents: DateComponents) -> UICalendarView.Decoration? {
-            guard let date = calendar.date(from: dateComponents) else { return nil }
-            let dayKey = DayBoundary(cutoffMinutes: 0).dayKey(for: date, calendar: calendar)
-            guard let indicator = indicators[dayKey] else { return nil }
-            switch indicator {
-            case .score(let score):
-                let color = UIColor(ScoreColor.color(for: score))
-                return .default(color: color)
+        .onChange(of: selectedDate) { newValue in
+            let newMonth = Self.monthStart(for: newValue, calendar: calendar)
+            if !calendar.isDate(newMonth, equalTo: displayedMonth, toGranularity: .month) {
+                displayedMonth = newMonth
             }
         }
+    }
 
-        func calendarView(
-            _ calendarView: UICalendarView,
-            didChangeVisibleDateComponentsFrom previousDateComponents: DateComponents
-        ) {
-            let visibleComponents = calendarView.visibleDateComponents
-            guard let date = calendar.date(from: visibleComponents) else { return }
-            onVisibleMonthChanged(date)
+    private var header: some View {
+        HStack {
+            Text(monthTitle(for: displayedMonth))
+                .font(.headline)
+            Spacer()
+            Button {
+                changeMonth(by: -1)
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .glassButton(.icon)
+            Button {
+                changeMonth(by: 1)
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .glassButton(.icon)
         }
+    }
+
+    private var weekdayRow: some View {
+        let symbols = orderedWeekdaySymbols()
+        return HStack {
+            ForEach(symbols.indices, id: \.self) { index in
+                Text(symbols[index])
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private var monthGrid: some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
+        let dates = monthGridDates(for: displayedMonth)
+        return LazyVGrid(columns: columns, spacing: 12) {
+            ForEach(dates.indices, id: \.self) { index in
+                if let date = dates[index] {
+                    let score = scoreValue(for: date)
+                    let isSelected = calendar.isDate(date, inSameDayAs: selectedDate)
+                    let isToday = calendar.isDate(date, inSameDayAs: currentDay)
+                    Button {
+                        selectedDate = date
+                    } label: {
+                        CalendarDayCell(
+                            date: date,
+                            calendar: calendar,
+                            score: score,
+                            isSelected: isSelected,
+                            isToday: isToday
+                        )
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Color.clear
+                        .frame(height: 56)
+                }
+            }
+        }
+    }
+
+    private func changeMonth(by value: Int) {
+        guard let newMonth = calendar.date(byAdding: .month, value: value, to: displayedMonth) else { return }
+        displayedMonth = Self.monthStart(for: newMonth, calendar: calendar)
+    }
+
+    private func monthTitle(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = calendar.locale ?? .current
+        formatter.dateFormat = "LLLL yyyy"
+        return formatter.string(from: date)
+    }
+
+    private func orderedWeekdaySymbols() -> [String] {
+        let symbols = calendar.veryShortStandaloneWeekdaySymbols.map { $0.uppercased() }
+        let firstIndex = max(0, min(calendar.firstWeekday - 1, symbols.count - 1))
+        return Array(symbols[firstIndex...]) + symbols[..<firstIndex]
+    }
+
+    private func monthGridDates(for month: Date) -> [Date?] {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: month),
+              let days = calendar.range(of: .day, in: .month, for: month) else {
+            return []
+        }
+
+        let monthStart = monthInterval.start
+        let firstWeekday = calendar.component(.weekday, from: monthStart)
+        let leadingEmpty = (firstWeekday - calendar.firstWeekday + 7) % 7
+
+        var dates: [Date?] = Array(repeating: nil, count: leadingEmpty)
+        for offset in 0..<days.count {
+            let day = calendar.date(byAdding: .day, value: offset, to: monthStart)
+            dates.append(day)
+        }
+
+        let total = dates.count
+        let trailingEmpty = (7 - (total % 7)) % 7
+        dates.append(contentsOf: Array(repeating: nil, count: trailingEmpty))
+        return dates
+    }
+
+    private func scoreValue(for date: Date) -> Double? {
+        let dayKey = DayBoundary(cutoffMinutes: 0).dayKey(for: date, calendar: calendar)
+        guard let indicator = indicators[dayKey] else { return nil }
+        switch indicator {
+        case .score(let score):
+            return score
+        }
+    }
+
+    private static func monthStart(for date: Date, calendar: Calendar) -> Date {
+        calendar.dateInterval(of: .month, for: date)?.start ?? date
+    }
+}
+
+private struct CalendarDayCell: View {
+    let date: Date
+    let calendar: Calendar
+    let score: Double?
+    let isSelected: Bool
+    let isToday: Bool
+
+    private let ringSize: CGFloat = 26
+    private let ringLineWidth: CGFloat = 2
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack {
+                if let score {
+                    Circle()
+                        .stroke(ScoreColor.color(for: score), lineWidth: ringLineWidth)
+                        .frame(width: ringSize, height: ringSize)
+                }
+
+                if isSelected || isToday {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: ringSize - 2, height: ringSize - 2)
+                }
+
+                Text("\(calendar.component(.day, from: date))")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle((isSelected || isToday) ? .white : .primary)
+            }
+
+            Text(scoreText)
+                .font(.footnote.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(score.map { ScoreColor.color(for: $0) } ?? .clear)
+                .opacity(score == nil ? 0 : 1)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 56)
+    }
+
+    private var scoreText: String {
+        guard let score else { return "00" }
+        return "\(Int(score.rounded()))"
     }
 }

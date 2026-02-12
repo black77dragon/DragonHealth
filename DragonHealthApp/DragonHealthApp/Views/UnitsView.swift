@@ -38,6 +38,8 @@ struct UnitsView: View {
                 } label: {
                     Label("Add Unit", systemImage: "plus")
                 }
+                .labelStyle(.iconOnly)
+                .glassButton(.icon)
             }
         }
         .sheet(isPresented: $showingAdd) {
@@ -103,6 +105,7 @@ private struct UnitDetailView: View {
                             await MainActor.run { dismiss() }
                         }
                     }
+                    .glassButton(.text)
                 }
             }
         }
@@ -134,6 +137,7 @@ private struct UnitEditorSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -148,6 +152,7 @@ private struct UnitEditorSheet: View {
                         )
                         dismiss()
                     }
+                    .glassButton(.text)
                     .disabled(name.isEmpty || symbol.isEmpty)
                 }
             }

@@ -37,6 +37,7 @@ struct MealTimingSettingsView: View {
                 Button("Reset to Defaults") {
                     resetToDefaults()
                 }
+                .glassButton(.text)
             }
         }
         .navigationTitle("Meal Timing")

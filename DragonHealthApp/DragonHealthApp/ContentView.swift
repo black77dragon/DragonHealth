@@ -174,7 +174,7 @@ private struct LaunchSplashView: View {
                     Button("OK") {
                         onDismiss()
                     }
-                    .buttonStyle(.borderedProminent)
+                    .glassButton(.text)
                     .controlSize(.large)
                     .tint(Color.accentColor)
 

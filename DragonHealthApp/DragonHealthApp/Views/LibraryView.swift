@@ -50,6 +50,8 @@ struct LibraryView: View {
                 } label: {
                     Label("Add Food", systemImage: "plus")
                 }
+                .labelStyle(.iconOnly)
+                .glassButton(.icon)
             }
         }
         .sheet(isPresented: $showingAdd) {
@@ -150,7 +152,7 @@ struct FoodItemRow: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .glassButton(.icon)
                 .accessibilityLabel("Unsplash photo credit")
             }
             if showsFavorite, item.isFavorite {
@@ -245,6 +247,13 @@ private struct FoodEntrySheet: View {
         case remote
     }
 
+    private enum PhotoSource: String, CaseIterable, Identifiable {
+        case local = "Local"
+        case unsplash = "Unsplash"
+
+        var id: String { rawValue }
+    }
+
     let categories: [Core.Category]
     let units: [Core.FoodUnit]
     let existingItem: FoodItem?
@@ -268,6 +277,8 @@ private struct FoodEntrySheet: View {
     @State private var isDownloadingRemote = false
     @State private var downloadError: String?
     @State private var removeExistingImage = false
+    @State private var photoSource: PhotoSource = .local
+    private let compactRowInsets = EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
 
     init(categories: [Core.Category], units: [Core.FoodUnit], item: FoodItem? = nil, onSave: @escaping (FoodItem) -> Void) {
         self.categories = categories
@@ -289,130 +300,178 @@ private struct FoodEntrySheet: View {
         NavigationStack {
             Form {
                 Section("Photo") {
-                    HStack(alignment: .center, spacing: 12) {
-                        FoodPhotoPreview(
-                            image: selectedImage,
-                            remoteURL: (selectedAttribution ?? existingAttribution)?.remoteURL
-                        )
-                        VStack(alignment: .leading, spacing: 8) {
-                            PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
-                                Label("Choose Photo", systemImage: "photo")
-                            }
-                            if selectedImage != nil {
-                                Button(role: .destructive) {
-                                    clearSelectedPhoto()
-                                } label: {
-                                    Label("Remove Photo", systemImage: "trash")
-                                }
-                            }
-                        }
-                    }
-
-                    Divider()
-
-                    Text("Search Unsplash")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 8) {
-                            TextField("Search food photos", text: $searchModel.query)
-                                .textInputAutocapitalization(.words)
-                                .autocorrectionDisabled()
-                                .submitLabel(.search)
-                                .onSubmit {
-                                    Task { await searchModel.search() }
-                                }
-                            Button("Search") {
-                                Task { await searchModel.search() }
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(searchModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-
-                        if !searchModel.isConfigured {
-                            Text("Unsplash API key is not configured.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if searchModel.isLoading {
-                            ProgressView("Searching…")
-                                .font(.caption)
-                        } else if let errorMessage = searchModel.errorMessage {
-                            Text(errorMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if isDownloadingRemote {
-                            ProgressView("Downloading photo…")
-                                .font(.caption)
-                        } else if let downloadError {
-                            Text(downloadError)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if !searchModel.results.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                LazyHGrid(rows: [GridItem(.fixed(80))], spacing: 12) {
-                                    ForEach(searchModel.results) { photo in
-                                        Button {
-                                            selectRemotePhoto(photo)
-                                        } label: {
-                                            UnsplashResultCell(
-                                                photo: photo,
-                                                isSelected: selectedAttribution?.sourceID == photo.id
-                                            )
-                                        }
-                                        .buttonStyle(.plain)
-                                        .disabled(isDownloadingRemote)
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(alignment: .top, spacing: 16) {
+                            FoodPhotoPreview(
+                                image: selectedImage,
+                                remoteURL: (selectedAttribution ?? existingAttribution)?.remoteURL
+                            )
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Source")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Picker("Source", selection: $photoSource) {
+                                    ForEach(PhotoSource.allCases) { source in
+                                        Text(source.rawValue).tag(source)
                                     }
                                 }
-                                .frame(height: 90)
-                                .padding(.vertical, 4)
+                                .pickerStyle(.segmented)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if photoSource == .local {
+                            HStack(spacing: 10) {
+                                PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
+                                    Label("Choose Photo", systemImage: "photo")
+                                        .glassLabel(.text)
+                                }
+                                if shouldShowRemovePhoto {
+                                    Button(role: .destructive) {
+                                        clearSelectedPhoto()
+                                    } label: {
+                                        Label("Remove", systemImage: "trash")
+                                    }
+                                    .glassButton(.text)
+                                }
+                            }
+                        } else {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Search Unsplash")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 8) {
+                                    TextField("Search food photos", text: $searchModel.query)
+                                        .textInputAutocapitalization(.words)
+                                        .autocorrectionDisabled()
+                                        .submitLabel(.search)
+                                        .onSubmit {
+                                            Task { await searchModel.search() }
+                                        }
+                                        .textFieldStyle(.roundedBorder)
+                                    Button("Search") {
+                                        Task { await searchModel.search() }
+                                    }
+                                    .glassButton(.compact)
+                                    .disabled(searchModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                }
+
+                                if !searchModel.isConfigured {
+                                    Text("Unsplash API key is not configured.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else if searchModel.isLoading {
+                                    ProgressView("Searching…")
+                                        .font(.caption)
+                                } else if let errorMessage = searchModel.errorMessage {
+                                    Text(errorMessage)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if isDownloadingRemote {
+                                    ProgressView("Downloading photo…")
+                                        .font(.caption)
+                                } else if let downloadError {
+                                    Text(downloadError)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if !searchModel.results.isEmpty {
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        LazyHGrid(rows: [GridItem(.fixed(80))], spacing: 12) {
+                                            ForEach(searchModel.results) { photo in
+                                                Button {
+                                                    selectRemotePhoto(photo)
+                                                } label: {
+                                                    UnsplashResultCell(
+                                                        photo: photo,
+                                                        isSelected: selectedAttribution?.sourceID == photo.id
+                                                    )
+                                                }
+                                                .buttonStyle(.plain)
+                                                .disabled(isDownloadingRemote)
+                                            }
+                                        }
+                                        .frame(height: 90)
+                                        .padding(.vertical, 4)
+                                    }
+                                }
                             }
                         }
-                    }
 
-                    if let attribution = selectedAttribution ?? existingAttribution {
-                        FoodPhotoAttributionView(attribution: attribution)
+                        if let attribution = selectedAttribution ?? existingAttribution {
+                            FoodPhotoAttributionView(attribution: attribution)
+                        }
                     }
                 }
 
                 Section("Details") {
-                    TextField("Name", text: $name)
-                    Picker("Category", selection: $categoryID) {
-                        ForEach(categories) { category in
-                            Text(category.name).tag(Optional(category.id))
+                    LabeledContent("Name") {
+                        TextField("Required", text: $name)
+                    }
+                    .listRowInsets(compactRowInsets)
+                    LabeledContent("Category") {
+                        Picker("", selection: $categoryID) {
+                            ForEach(categories) { category in
+                                Text(category.name).tag(Optional(category.id))
+                            }
+                        }
+                        .labelsHidden()
+                    }
+                    .listRowInsets(compactRowInsets)
+                    LabeledContent("Portion") {
+                        Stepper(value: $portion, in: 0.1...6.0, step: 0.1) {
+                            Text(portion.cleanNumber)
                         }
                     }
-                    Stepper(value: $portion, in: 0.1...6.0, step: 0.1) {
-                        Text("Portion: \(portion.cleanNumber)")
+                    .listRowInsets(compactRowInsets)
+                    LabeledContent("Favorite") {
+                        Toggle("", isOn: $isFavorite)
+                            .labelsHidden()
                     }
-                    Toggle("Favorite", isOn: $isFavorite)
-                    TextField("Notes", text: $notes, axis: .vertical)
-                        .lineLimit(3, reservesSpace: true)
+                    .listRowInsets(compactRowInsets)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Notes")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("Add optional notes", text: $notes, axis: .vertical)
+                            .lineLimit(3, reservesSpace: true)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    .listRowInsets(compactRowInsets)
                 }
 
                 Section("Portion Size") {
-                    HStack {
-                        Text("Amount per portion")
-                        Spacer()
-                        TextField("0", text: $amountText)
-                            .keyboardType(unitAllowsDecimal ? .decimalPad : .numberPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(minWidth: 80)
-                    }
-                    Picker("Unit", selection: $unitID) {
-                        Text("None").tag(Optional<UUID>.none)
-                        ForEach(availableUnits) { unit in
-                            Text("\(unit.name) (\(unit.symbol))").tag(Optional(unit.id))
+                    LabeledContent("Amount/portion") {
+                        HStack(spacing: 8) {
+                            TextField("Required", text: $amountText)
+                                .keyboardType(unitAllowsDecimal ? .decimalPad : .numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(minWidth: 90)
+                            Picker("", selection: $unitID) {
+                                Text("None").tag(Optional<UUID>.none)
+                                ForEach(availableUnits) { unit in
+                                    Text("\(unit.name) (\(unit.symbol))").tag(Optional(unit.id))
+                                }
+                            }
+                            .labelsHidden()
                         }
+                    }
+                    .listRowInsets(compactRowInsets)
+                    if amountText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("Enter the numeric amount for one portion (for example, 100).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .listRowInsets(compactRowInsets)
                     }
                     if let amountValue = parsedAmount, let unitSymbol = unitSymbol(for: unitID) {
                         Text("1 portion = \(amountValue.cleanNumber) \(unitSymbol)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .listRowInsets(compactRowInsets)
                     }
                 }
             }
@@ -420,6 +479,7 @@ private struct FoodEntrySheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -458,6 +518,7 @@ private struct FoodEntrySheet: View {
                         )
                         dismiss()
                     }
+                    .glassButton(.text)
                     .disabled(name.isEmpty || categoryID == nil || !isAmountSelectionValid)
                 }
             }
@@ -470,6 +531,11 @@ private struct FoodEntrySheet: View {
                 if selectedImage == nil {
                     photoSelectionKind = .none
                 }
+                if (selectedAttribution ?? existingAttribution) != nil {
+                    photoSource = .unsplash
+                } else {
+                    photoSource = .local
+                }
             }
             .task(id: selectedPhotoItem) {
                 await handleSelectedPhoto()
@@ -479,6 +545,10 @@ private struct FoodEntrySheet: View {
 
     private var availableUnits: [Core.FoodUnit] {
         units.filter { $0.isEnabled || $0.id == unitID }
+    }
+
+    private var shouldShowRemovePhoto: Bool {
+        selectedImage != nil || existingImagePath != nil
     }
 
     private var parsedAmount: Double? {
@@ -597,7 +667,7 @@ private struct FoodPhotoPreview: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 14)
                 .fill(Color(.secondarySystemBackground))
             if let remoteURL, let url = URL(string: remoteURL) {
                 AsyncImage(url: url) { phase in
@@ -622,10 +692,10 @@ private struct FoodPhotoPreview: View {
                 fallbackView()
             }
         }
-        .frame(width: 72, height: 72)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .frame(width: 160, height: 110)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 14)
                 .stroke(Color(.separator), lineWidth: 1)
         )
     }
@@ -633,7 +703,7 @@ private struct FoodPhotoPreview: View {
     @ViewBuilder
     private func fallbackView() -> some View {
         Image(systemName: "fork.knife")
-            .font(.system(size: 28, weight: .regular))
+            .font(.system(size: 36, weight: .regular))
             .foregroundStyle(.secondary)
     }
 }

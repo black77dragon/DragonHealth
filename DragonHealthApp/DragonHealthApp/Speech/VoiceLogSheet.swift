@@ -36,6 +36,7 @@ struct VoiceLogSheet: View {
     @StateObject private var speech = SpeechCaptureService()
     @State private var selectedLanguage: VoiceLogLanguage = .englishUS
     @State private var transcriptText: String = ""
+    @State private var autoDeleteOnPause: Bool = false
     @State private var draftItems: [VoiceDraftItem] = []
     @State private var selectedMealSlotID: UUID?
     @State private var parseError: String?
@@ -64,22 +65,33 @@ struct VoiceLogSheet: View {
                 Section("Recording") {
                     HStack(spacing: 12) {
                         Button {
-                            if speech.isRecording {
-                                speech.stop()
-                            } else {
-                                speech.start(localeIdentifier: selectedLanguage.localeIdentifier)
-                            }
+                            speech.autoDeleteOnPause = autoDeleteOnPause
+                            speech.start(localeIdentifier: selectedLanguage.localeIdentifier)
                         } label: {
-                            Label(speech.isRecording ? "Stop" : "Start", systemImage: speech.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+                            Label("Start", systemImage: "mic.circle.fill")
                         }
-                        .buttonStyle(.borderedProminent)
+                        .glassButton(.text)
+                        .disabled(speech.isRecording)
 
-                        Button("Re-start") {
+                        Button {
+                            speech.stop()
+                        } label: {
+                            Label("End", systemImage: "stop.circle.fill")
+                        }
+                        .glassButton(.text)
+                        .disabled(!speech.isRecording)
+
+                        Button("Restart") {
                             transcriptText = ""
+                            speech.autoDeleteOnPause = autoDeleteOnPause
                             speech.restart(localeIdentifier: selectedLanguage.localeIdentifier)
                         }
-                        .buttonStyle(.bordered)
+                        .glassButton(.text)
+                        .disabled(speech.isRecording)
                     }
+
+                    Toggle("Auto-delete on pause", isOn: $autoDeleteOnPause)
+                        .disabled(speech.isRecording)
 
                     TextEditor(text: $transcriptText)
                         .frame(minHeight: 120)
@@ -88,6 +100,7 @@ struct VoiceLogSheet: View {
                     Button("Parse Transcript") {
                         parseDraft()
                     }
+                    .glassButton(.text)
                     .disabled(speech.isRecording || transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     if let errorMessage = speech.errorMessage {
@@ -136,6 +149,7 @@ struct VoiceLogSheet: View {
                         speech.stop()
                         dismiss()
                     }
+                    .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -147,6 +161,7 @@ struct VoiceLogSheet: View {
                         speech.stop()
                         dismiss()
                     }
+                    .glassButton(.text)
                     .disabled(!canSave)
                 }
             }
@@ -156,6 +171,7 @@ struct VoiceLogSheet: View {
                 }
             }
             .onAppear {
+                speech.autoDeleteOnPause = autoDeleteOnPause
                 if selectedMealSlotID == nil {
                     selectedMealSlotID = mealSlots.first?.id
                 }

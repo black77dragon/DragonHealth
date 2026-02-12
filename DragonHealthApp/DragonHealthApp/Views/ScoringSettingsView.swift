@@ -68,6 +68,7 @@ struct ScoringSettingsView: View {
                 } label: {
                     Label("Add Rule", systemImage: "plus")
                 }
+                .glassButton(.text)
                 .disabled(categories.count < 2)
             }
         }
@@ -79,6 +80,7 @@ struct ScoringSettingsView: View {
                 } label: {
                     Image(systemName: "info.circle.fill")
                 }
+                .glassButton(.icon)
                 .accessibilityLabel("Scoring help")
             }
         }
@@ -149,6 +151,7 @@ private struct ScoringInfoSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .glassButton(.text)
                 }
             }
         }
@@ -247,6 +250,7 @@ private struct CategoryScoreProfileView: View {
                 } label: {
                     Text("Reset to Default")
                 }
+                .glassButton(.text)
                 .disabled(!usesCustomProfile)
             }
         }
@@ -276,6 +280,7 @@ private struct CategoryScoreProfileView: View {
                     await MainActor.run { dismiss() }
                 }
             }
+            .glassButton(.text)
         }
     }
 }
@@ -337,6 +342,7 @@ private struct CompensationRuleDetailView: View {
                     await MainActor.run { dismiss() }
                 }
             }
+            .glassButton(.text)
         }
     }
 
@@ -394,6 +400,7 @@ private struct CompensationRuleEditorSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .glassButton(.text)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -407,6 +414,7 @@ private struct CompensationRuleEditorSheet: View {
                         )
                         dismiss()
                     }
+                    .glassButton(.text)
                     .disabled(categories.count < 2 || fromCategoryID == toCategoryID)
                 }
             }

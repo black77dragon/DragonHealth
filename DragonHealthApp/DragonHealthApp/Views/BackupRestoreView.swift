@@ -36,6 +36,7 @@ struct BackupRestoreView: View {
                     } label: {
                         Label(backupManager.isBackingUp ? "Backing Up..." : "Back Up Now", systemImage: "icloud.and.arrow.up")
                     }
+                    .glassButton(.text)
                     .disabled(backupManager.isBackingUp || backupManager.isRestoring)
                 } else {
                     Text("iCloud is not available. Sign in to iCloud to enable backups.")
@@ -87,6 +88,7 @@ struct BackupRestoreView: View {
                                 } label: {
                                     Label(backupManager.isRestoring ? "Restoring..." : "Restore", systemImage: "arrow.counterclockwise")
                                 }
+                                .glassButton(.text)
                                 .disabled(!backup.isCompatible || backupManager.isRestoring || backupManager.isBackingUp)
                             }
                             .padding(.vertical, 4)

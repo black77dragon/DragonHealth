@@ -8,13 +8,17 @@ final class SpeechCaptureService: ObservableObject {
     @Published var transcript: String = ""
     @Published var isRecording: Bool = false
     @Published var errorMessage: String?
+    var autoDeleteOnPause: Bool = false
 
     private let audioEngine = AVAudioEngine()
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var speechRecognizer: SFSpeechRecognizer?
     private var sessionPrefix: String = ""
+    private var lastPartial: String = ""
     private var suppressNextCancellationError: Bool = false
+    private var isStarting: Bool = false
+    private var isStopping: Bool = false
 
     func start(localeIdentifier: String) {
         Task {
@@ -34,6 +38,10 @@ final class SpeechCaptureService: ObservableObject {
     }
 
     private func startRecording(localeIdentifier: String) async {
+        guard !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
+
         suppressNextCancellationError = true
         stopRecording()
         errorMessage = nil
@@ -63,6 +71,7 @@ final class SpeechCaptureService: ObservableObject {
         speechRecognizer = recognizer
         let trimmedPrefix = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         sessionPrefix = trimmedPrefix.isEmpty ? "" : "\(trimmedPrefix) "
+        lastPartial = ""
 
         let audioSession = AVAudioSession.sharedInstance()
         do {
@@ -100,8 +109,7 @@ final class SpeechCaptureService: ObservableObject {
             guard let self else { return }
             if let result {
                 Task { @MainActor in
-                    let updated = self.sessionPrefix + result.bestTranscription.formattedString
-                    self.transcript = updated.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.updateTranscript(with: result.bestTranscription.formattedString)
                 }
                 if result.isFinal {
                     Task { @MainActor in
@@ -127,6 +135,10 @@ final class SpeechCaptureService: ObservableObject {
     }
 
     private func stopRecording() {
+        guard !isStopping else { return }
+        isStopping = true
+        defer { isStopping = false }
+
         if audioEngine.isRunning {
             audioEngine.stop()
             audioEngine.inputNode.removeTap(onBus: 0)
@@ -136,6 +148,42 @@ final class SpeechCaptureService: ObservableObject {
         recognitionTask = nil
         recognitionRequest = nil
         isRecording = false
+    }
+
+    private func updateTranscript(with partial: String) {
+        let trimmedPartial = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if autoDeleteOnPause {
+            lastPartial = trimmedPartial
+            let updated = sessionPrefix + trimmedPartial
+            transcript = updated.trimmingCharacters(in: .whitespacesAndNewlines)
+            return
+        }
+
+        if shouldStartNewSegment(currentPartial: trimmedPartial) {
+            commitLastPartialToPrefix()
+        }
+
+        lastPartial = trimmedPartial
+        let updated = sessionPrefix + trimmedPartial
+        transcript = updated.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func shouldStartNewSegment(currentPartial: String) -> Bool {
+        guard !lastPartial.isEmpty else { return false }
+        guard !currentPartial.isEmpty else { return false }
+        guard currentPartial.count < lastPartial.count else { return false }
+        if lastPartial.hasPrefix(currentPartial) { return false }
+
+        let lastWords = lastPartial.split(whereSeparator: { $0.isWhitespace })
+        let currentWords = currentPartial.split(whereSeparator: { $0.isWhitespace })
+        guard currentWords.count < lastWords.count else { return false }
+        return (lastWords.count - currentWords.count) >= 2
+    }
+
+    private func commitLastPartialToPrefix() {
+        let combined = (sessionPrefix + lastPartial).trimmingCharacters(in: .whitespacesAndNewlines)
+        sessionPrefix = combined.isEmpty ? "" : "\(combined) "
     }
 
     private func isCancellationError(_ error: Error) -> Bool {

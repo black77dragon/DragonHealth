@@ -64,6 +64,7 @@ struct MoreView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
                             Label("Choose Photo", systemImage: "person.crop.circle.badge.plus")
+                                .glassLabel(.text)
                         }
                         if profileImage != nil {
                             Button(role: .destructive) {
@@ -71,6 +72,7 @@ struct MoreView: View {
                             } label: {
                                 Label("Remove Photo", systemImage: "trash")
                             }
+                            .glassButton(.text)
                         }
                     }
                 }
@@ -114,6 +116,7 @@ struct MoreView: View {
                     Button("Clear Target Date") {
                         updateSettingsValue { $0.targetWeightDate = nil }
                     }
+                    .glassButton(.compact)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
@@ -181,6 +184,7 @@ struct MoreView: View {
                 } label: {
                     Label("Add Category", systemImage: "plus")
                 }
+                .glassButton(.text)
             }
 
             Section("Meal Slots") {
@@ -202,6 +206,7 @@ struct MoreView: View {
                 } label: {
                     Label("Add Meal Slot", systemImage: "plus")
                 }
+                .glassButton(.text)
             }
         }
         .navigationTitle("Extras")

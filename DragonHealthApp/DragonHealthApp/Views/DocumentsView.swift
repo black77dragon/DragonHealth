@@ -41,6 +41,8 @@ struct DocumentsView: View {
                 } label: {
                     Label("Add Document", systemImage: "plus")
                 }
+                .labelStyle(.iconOnly)
+                .glassButton(.icon)
             }
         }
         .sheet(isPresented: $showingPicker) {
