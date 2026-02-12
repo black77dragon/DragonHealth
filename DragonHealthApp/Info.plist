@@ -23,6 +23,12 @@
 	<string>DragonHealth reads your health data to keep body metrics, steps, and active energy (Move kcal) in sync.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>DragonHealth uses the microphone to capture voice logs.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>DragonHealth uses the camera to capture meal photos for AI logging.</string>
+	<key>OPENAI_API_KEY</key>
+	<string>REPLACE_WITH_OPENAI_API_KEY</string>
+	<key>OPENAI_VISION_MODEL</key>
+	<string>gpt-4.1-mini</string>
 	<key>UNSPLASH_APPLICATION_ID</key>
 	<string>REPLACE_WITH_UNSPLASH_APPLICATION_ID</string>
 	<key>UNSPLASH_ACCESS_KEY</key>

@@ -7,6 +7,7 @@ enum KeychainStore {
     enum Key: String {
         case unsplashApplicationID = "unsplash.application_id"
         case unsplashAccessKey = "unsplash.access_key"
+        case openAIApiKey = "openai.api_key"
     }
 
     static func read(_ key: Key) -> String? {

@@ -351,6 +351,23 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func upsertFoodItems(_ items: [Core.FoodItem]) async -> String? {
+        guard let db else { return "Database is unavailable." }
+        guard !items.isEmpty else { return nil }
+        do {
+            for item in items {
+                try await db.upsertFoodItem(item)
+            }
+            foodItems = try await db.fetchFoodItems()
+            refreshToken = UUID()
+            return nil
+        } catch {
+            let message = "Food import error: \(error.localizedDescription)"
+            loadState = .failed(message)
+            return message
+        }
+    }
+
     func deleteFoodItem(_ item: Core.FoodItem) async {
         guard let db else { return }
         do {

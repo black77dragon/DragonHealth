@@ -10,9 +10,6 @@ struct LibraryView: View {
     @State private var addKind: FoodItemKind = .single
     @State private var editingItem: FoodItem?
     @State private var searchText = ""
-    @State private var exportFile: ExportFile?
-    @State private var showingExportError = false
-    @State private var exportErrorMessage = ""
 
     var body: some View {
         List {
@@ -49,15 +46,6 @@ struct LibraryView: View {
         .navigationTitle("Library")
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always))
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    exportFoodLibrary()
-                } label: {
-                    Label("Export Library", systemImage: "square.and.arrow.up")
-                }
-                .labelStyle(.iconOnly)
-                .glassButton(.icon)
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showingAddTypePicker = true
@@ -101,14 +89,6 @@ struct LibraryView: View {
         } message: {
             Text("Choose what to add.")
         }
-        .sheet(item: $exportFile, onDismiss: clearExportFile) { file in
-            ActivityShareSheet(activityItems: [file.url])
-        }
-        .alert("Export Failed", isPresented: $showingExportError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(exportErrorMessage)
-        }
     }
 
     private func categoryName(for id: UUID) -> String {
@@ -145,78 +125,6 @@ struct LibraryView: View {
             let item = items[index]
             Task { await store.deleteFoodItem(item) }
         }
-    }
-
-    private func exportFoodLibrary() {
-        do {
-            let payload = FoodLibraryExportPayload(
-                exportedAt: ISO8601DateFormatter().string(from: Date()),
-                itemCount: store.foodItems.count,
-                items: store.foodItems.map { item in
-                    FoodLibraryExportItem(
-                        id: item.id.uuidString,
-                        name: item.name,
-                        categoryID: item.categoryID.uuidString,
-                        categoryName: categoryName(for: item.categoryID),
-                        portionEquivalent: item.portionEquivalent,
-                        amountPerPortion: item.amountPerPortion,
-                        unitID: item.unitID?.uuidString,
-                        unitName: unitName(for: item.unitID),
-                        unitSymbol: unitSymbol(for: item.unitID),
-                        notes: item.notes,
-                        isFavorite: item.isFavorite,
-                        imagePath: item.imagePath,
-                        imageRemoteURL: item.imageRemoteURL,
-                        imageSource: item.imageSource?.rawValue,
-                        imageSourceID: item.imageSourceID,
-                        imageAttributionName: item.imageAttributionName,
-                        imageAttributionURL: item.imageAttributionURL,
-                        imageSourceURL: item.imageSourceURL,
-                        kind: item.kind.rawValue,
-                        compositeComponents: item.compositeComponents.map {
-                            FoodLibraryExportComponent(
-                                foodItemID: $0.foodItemID.uuidString,
-                                portionMultiplier: $0.portionMultiplier
-                            )
-                        }
-                    )
-                }
-            )
-
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.nonConformingFloatEncodingStrategy = .convertToString(
-                positiveInfinity: "Infinity",
-                negativeInfinity: "-Infinity",
-                nan: "NaN"
-            )
-
-            let data = try encoder.encode(payload)
-            let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(exportFileName())
-            try data.write(to: fileURL, options: .atomic)
-            exportFile = ExportFile(url: fileURL)
-        } catch {
-            exportErrorMessage = error.localizedDescription
-            showingExportError = true
-        }
-    }
-
-    private func exportFileName() -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        return "dragonhealth-food-library-\(formatter.string(from: Date())).json"
-    }
-
-    private func clearExportFile() {
-        guard let url = exportFile?.url else { return }
-        try? FileManager.default.removeItem(at: url)
-        exportFile = nil
-    }
-
-    private func unitName(for id: UUID?) -> String? {
-        guard let id else { return nil }
-        return store.units.first(where: { $0.id == id })?.name
     }
 
     @ViewBuilder
@@ -1195,56 +1103,5 @@ private struct FoodPhotoCreditSheet: View {
             .navigationTitle("Photo Credit")
             .navigationBarTitleDisplayMode(.inline)
         }
-    }
-}
-
-private struct FoodLibraryExportPayload: Encodable {
-    let exportedAt: String
-    let itemCount: Int
-    let items: [FoodLibraryExportItem]
-}
-
-private struct FoodLibraryExportItem: Encodable {
-    let id: String
-    let name: String
-    let categoryID: String
-    let categoryName: String
-    let portionEquivalent: Double
-    let amountPerPortion: Double?
-    let unitID: String?
-    let unitName: String?
-    let unitSymbol: String?
-    let notes: String?
-    let isFavorite: Bool
-    let imagePath: String?
-    let imageRemoteURL: String?
-    let imageSource: String?
-    let imageSourceID: String?
-    let imageAttributionName: String?
-    let imageAttributionURL: String?
-    let imageSourceURL: String?
-    let kind: String
-    let compositeComponents: [FoodLibraryExportComponent]
-}
-
-private struct FoodLibraryExportComponent: Encodable {
-    let foodItemID: String
-    let portionMultiplier: Double
-}
-
-private struct ExportFile: Identifiable {
-    let id = UUID()
-    let url: URL
-}
-
-private struct ActivityShareSheet: UIViewControllerRepresentable {
-    let activityItems: [Any]
-    var applicationActivities: [UIActivity]? = nil
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
     }
 }

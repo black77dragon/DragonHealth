@@ -344,6 +344,7 @@ Migration:
 - Food library picker to prefill category and portion.
 - Food library picker uses a compact library list (reduced row padding/insets, smaller thumbnails) to show more items per screen.
 - If a category is already selected in Quick Add, the food library picker defaults its filter to that category (user can change).
+- Photo Log (MVP): capture or pick a meal image, run AI decomposition, review/edit detected items, then save as standard daily log entries.
 - Entry edit and delete flows with notes.
 
 #### Revised Today + Quick Add Flow (Category-First)
@@ -561,9 +562,11 @@ Weekly reduction required                       -0.32 kg
   - Units list with add/edit/disable.
 - Data and backup:
   - iCloud backup status, last backup metadata, and manual backup trigger (optional note).
+  - Backup scope notice and tooltip: backup/restore include database data only.
   - Restore backup with compatibility checks and confirmation.
 - Integrations:
   - Apple Health sync status and manual sync trigger.
+  - Meal Photo AI API key settings (local keychain storage).
 - Documents:
   - Document library entry point.
 
@@ -578,6 +581,8 @@ Weekly reduction required                       -0.32 kg
 - iCloud backups are optional and run daily when iCloud is available.
 - Manual backups are available in Manage > Data and Backup with optional notes.
 - Restore is available from Manage > Data and Backup and only allows compatible database versions.
+- iCloud backup and restore include only the SQLite database.
+- Document files, food images, and profile photo files are stored locally and are not included in iCloud backup/restore.
 - Documents and images are stored locally in app documents subfolders.
 - No accounts, no external servers.
 
@@ -589,10 +594,12 @@ Weekly reduction required                       -0.32 kg
 
 ## 11. Privacy
 
-- All data stays on-device unless the user enables iCloud backups.
+- All data stays on-device unless the user enables iCloud backups for database data.
+- Document files, food images, and profile photo files remain on-device in the current build.
 - Apple Health access is optional and read-only.
 - Food photo search calls the Unsplash API and downloads the chosen image to local storage.
-- No analytics, tracking, or third-party data sharing beyond photo search.
+- Meal photo analysis sends the selected image to OpenAI only when the user runs Photo Log analysis.
+- No analytics, tracking, or third-party data sharing beyond user-initiated integrations.
 
 ## 12. Explicitly Out of Scope (Current Build)
 
@@ -601,6 +608,6 @@ Weekly reduction required                       -0.32 kg
 - Apple Health write-back
 - Notifications and reminders
 - Widgets / lock screen quick add
-- Meal photos per log entry
+- Persistent meal photos per log entry history
 - Streak analytics
 - Adherence heatmaps or trend charts

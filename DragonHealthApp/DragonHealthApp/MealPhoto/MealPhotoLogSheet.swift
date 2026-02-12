@@ -1,0 +1,466 @@
+import Core
+import PhotosUI
+import SwiftUI
+import UIKit
+
+private enum MealPhotoConfidencePolicy {
+    static let reviewThreshold: Double = 0.60
+}
+
+struct MealPhotoLogSheet: View {
+    let categories: [Core.Category]
+    let mealSlots: [MealSlot]
+    let foodItems: [FoodItem]
+    let units: [FoodUnit]
+    let preselectedMealSlotID: UUID?
+    let onSave: (MealSlot, [MealPhotoDraftItem]) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedMealSlotID: UUID?
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedImage: UIImage?
+    @State private var draftItems: [MealPhotoDraftItem] = []
+    @State private var parseError: String?
+    @State private var isAnalyzing = false
+    @State private var showingCamera = false
+    @State private var lowConfidenceReviewed = false
+    @State private var analysisTask: Task<Void, Never>?
+
+    private var availableFoods: [FoodItem] {
+        foodItems.filter { !$0.kind.isComposite }
+    }
+
+    private var canSave: Bool {
+        guard selectedMealSlotID != nil else { return false }
+        guard !draftItems.isEmpty else { return false }
+        guard !requiresLowConfidenceReview else { return false }
+        return draftItems.allSatisfy { isItemValid($0) }
+    }
+
+    private var canAnalyze: Bool {
+        selectedImage != nil && !isAnalyzing && MealPhotoAIConfig.client() != nil
+    }
+
+    private var hasCamera: Bool {
+        UIImagePickerController.isSourceTypeAvailable(.camera)
+    }
+
+    private var lowConfidenceItems: [MealPhotoDraftItem] {
+        draftItems.filter { $0.confidence < MealPhotoConfidencePolicy.reviewThreshold }
+    }
+
+    private var requiresLowConfidenceReview: Bool {
+        !lowConfidenceItems.isEmpty && !lowConfidenceReviewed
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Photo") {
+                    if let selectedImage {
+                        Image(uiImage: selectedImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity, maxHeight: 220)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    } else {
+                        Text("Take or choose a meal photo to start.")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack(spacing: 12) {
+                        Button {
+                            showingCamera = true
+                        } label: {
+                            Label("Take Photo", systemImage: "camera")
+                        }
+                        .glassButton(.text)
+                        .disabled(!hasCamera)
+
+                        PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
+                            Label("Choose Photo", systemImage: "photo")
+                                .glassLabel(.text)
+                        }
+                    }
+                }
+
+                Section("AI Analysis") {
+                    if MealPhotoAIConfig.client() == nil {
+                        Text("OpenAI API key missing. Add it in Manage > Integrations > Meal Photo AI.")
+                            .foregroundStyle(.red)
+                            .font(.footnote)
+                    }
+
+                    Button {
+                        analyzePhoto()
+                    } label: {
+                        Label("Analyze Photo", systemImage: "sparkles")
+                    }
+                    .glassButton(.text)
+                    .disabled(!canAnalyze)
+
+                    if isAnalyzing {
+                        ProgressView("Analyzing image...")
+                            .font(.footnote)
+                    }
+
+                    if let parseError {
+                        Text(parseError)
+                            .foregroundStyle(.red)
+                            .font(.footnote)
+                    }
+                }
+
+                if !draftItems.isEmpty {
+                    if !lowConfidenceItems.isEmpty {
+                        Section("Review Needed") {
+                            Text("Some detected items are low confidence. Review before saving.")
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+
+                            ForEach(lowConfidenceItems) { item in
+                                Text("\(item.foodText): \((item.confidence * 100).rounded().cleanNumber)% confidence")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Toggle("I reviewed low-confidence items", isOn: $lowConfidenceReviewed)
+                        }
+                    }
+
+                    Section("Meal") {
+                        Picker("Meal Slot", selection: $selectedMealSlotID) {
+                            ForEach(mealSlots) { slot in
+                                Text(slot.name).tag(Optional(slot.id))
+                            }
+                        }
+                    }
+
+                    ForEach($draftItems) { $item in
+                        Section("Item") {
+                            MealPhotoDraftRow(
+                                item: $item,
+                                categories: categories,
+                                foodItems: availableFoods,
+                                units: units
+                            )
+                        }
+                    }
+                } else {
+                    Section("Draft") {
+                        Text("No draft items yet.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("Photo Log")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .glassButton(.text)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard let mealSlotID = selectedMealSlotID,
+                              let mealSlot = mealSlots.first(where: { $0.id == mealSlotID }) else {
+                            return
+                        }
+                        onSave(mealSlot, draftItems)
+                        dismiss()
+                    }
+                    .glassButton(.text)
+                    .disabled(!canSave)
+                }
+            }
+            .onAppear {
+                if selectedMealSlotID == nil {
+                    if let preselectedMealSlotID,
+                       mealSlots.contains(where: { $0.id == preselectedMealSlotID }) {
+                        selectedMealSlotID = preselectedMealSlotID
+                    } else {
+                        selectedMealSlotID = mealSlots.first?.id
+                    }
+                }
+            }
+            .onDisappear {
+                analysisTask?.cancel()
+                analysisTask = nil
+            }
+            .task(id: selectedPhotoItem) {
+                await loadSelectedPhoto()
+            }
+            .sheet(isPresented: $showingCamera) {
+                CameraCaptureView(
+                    onCapture: { image in
+                        analysisTask?.cancel()
+                        analysisTask = nil
+                        isAnalyzing = false
+                        selectedImage = image
+                        selectedPhotoItem = nil
+                        showingCamera = false
+                        draftItems = []
+                        parseError = nil
+                        lowConfidenceReviewed = false
+                    },
+                    onCancel: {
+                        showingCamera = false
+                    }
+                )
+            }
+        }
+    }
+
+    private func analyzePhoto() {
+        guard let selectedImage else { return }
+        guard let client = MealPhotoAIConfig.client() else {
+            parseError = "OpenAI API key missing."
+            return
+        }
+
+        parseError = nil
+        isAnalyzing = true
+
+        analysisTask?.cancel()
+        analysisTask = Task {
+            do {
+                let detections = try await client.analyzeMeal(
+                    image: selectedImage,
+                    foodNames: availableFoods.map(\.name),
+                    categoryNames: categories.map(\.name)
+                )
+                let builder = MealPhotoDraftBuilder(categories: categories, foodItems: availableFoods, units: units)
+                let resolvedItems = builder.makeDraftItems(from: detections)
+
+                await MainActor.run {
+                    analysisTask = nil
+                    isAnalyzing = false
+                    if resolvedItems.isEmpty {
+                        parseError = "Could not detect any food items."
+                        draftItems = []
+                        lowConfidenceReviewed = false
+                        return
+                    }
+                    draftItems = resolvedItems
+                    lowConfidenceReviewed = false
+                    if selectedMealSlotID == nil {
+                        selectedMealSlotID = preselectedMealSlotID ?? mealSlots.first?.id
+                    }
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    analysisTask = nil
+                    isAnalyzing = false
+                }
+            } catch {
+                await MainActor.run {
+                    analysisTask = nil
+                    isAnalyzing = false
+                    parseError = userMessage(for: error)
+                }
+            }
+        }
+    }
+
+    private func loadSelectedPhoto() async {
+        guard let selectedPhotoItem else { return }
+        analysisTask?.cancel()
+        analysisTask = nil
+        await MainActor.run {
+            isAnalyzing = false
+        }
+        do {
+            guard let data = try await selectedPhotoItem.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else {
+                await MainActor.run {
+                    parseError = "Unable to load selected image."
+                }
+                return
+            }
+            await MainActor.run {
+                selectedImage = image
+                draftItems = []
+                parseError = nil
+                lowConfidenceReviewed = false
+            }
+        } catch {
+            await MainActor.run {
+                parseError = "Photo load failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func userMessage(for error: Error) -> String {
+        if let clientError = error as? OpenAIMealPhotoClient.ClientError {
+            return clientError.errorDescription ?? "Photo analysis failed."
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet:
+                return "No internet connection. Please reconnect and retry."
+            case .timedOut:
+                return "The request timed out. Please try again."
+            default:
+                return "Network error: \(urlError.localizedDescription)"
+            }
+        }
+        return error.localizedDescription
+    }
+
+    private func isItemValid(_ item: MealPhotoDraftItem) -> Bool {
+        guard !item.foodText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard item.categoryID != nil else { return false }
+        guard let portion = item.portion, portion > 0 else { return false }
+        return true
+    }
+}
+
+private struct MealPhotoDraftRow: View {
+    @Binding var item: MealPhotoDraftItem
+    let categories: [Core.Category]
+    let foodItems: [FoodItem]
+    let units: [FoodUnit]
+    private var isLowConfidence: Bool {
+        item.confidence < MealPhotoConfidencePolicy.reviewThreshold
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Food", text: $item.foodText)
+
+            Picker("Food Library", selection: $item.matchedFoodID) {
+                Text("Custom").tag(UUID?.none)
+                ForEach(foodItems) { food in
+                    Text(food.name).tag(Optional(food.id))
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: item.matchedFoodID) { _, newValue in
+                guard let newValue,
+                      let food = foodItems.first(where: { $0.id == newValue }) else { return }
+                item.foodText = food.name
+                item.categoryID = food.categoryID
+                item.portion = Portion.roundToIncrement(food.portionEquivalent)
+                if let amountPerPortion = food.amountPerPortion, let unitID = food.unitID {
+                    item.amountValue = amountPerPortion
+                    item.amountUnitID = unitID
+                }
+            }
+
+            Picker("Category", selection: $item.categoryID) {
+                Text("Select").tag(UUID?.none)
+                ForEach(categories) { category in
+                    Text(category.name).tag(Optional(category.id))
+                }
+            }
+
+            HStack {
+                TextField("Amount", text: amountBinding)
+                    .keyboardType(.decimalPad)
+                Picker("Unit", selection: $item.amountUnitID) {
+                    Text("None").tag(UUID?.none)
+                    ForEach(units) { unit in
+                        Text(unit.symbol).tag(Optional(unit.id))
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+
+            TextField("Portion", text: portionBinding)
+                .keyboardType(.decimalPad)
+
+            Text("AI confidence: \((item.confidence * 100).rounded().cleanNumber)%")
+                .font(.caption)
+                .foregroundStyle(isLowConfidence ? .orange : .secondary)
+
+            if isLowConfidence {
+                Text("Low confidence: verify food and portion before saving.")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+
+            if !missingFields.isEmpty {
+                Text("Missing: \(missingFields.joined(separator: ", "))")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var amountBinding: Binding<String> {
+        Binding(
+            get: { item.amountValue?.cleanNumber ?? "" },
+            set: { newValue in
+                let normalized = newValue.replacingOccurrences(of: ",", with: ".")
+                if let value = Double(normalized), value > 0 {
+                    item.amountValue = Portion.roundToIncrement(value)
+                } else {
+                    item.amountValue = nil
+                }
+            }
+        )
+    }
+
+    private var portionBinding: Binding<String> {
+        Binding(
+            get: { item.portion?.cleanNumber ?? "" },
+            set: { newValue in
+                let normalized = newValue.replacingOccurrences(of: ",", with: ".")
+                if let value = Double(normalized), value > 0 {
+                    item.portion = Portion.roundToIncrement(value)
+                } else {
+                    item.portion = nil
+                }
+            }
+        )
+    }
+
+    private var missingFields: [String] {
+        var missing: [String] = []
+        if item.categoryID == nil { missing.append("category") }
+        if item.portion == nil { missing.append("portion") }
+        if item.foodText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { missing.append("food") }
+        return missing
+    }
+}
+
+private struct CameraCaptureView: UIViewControllerRepresentable {
+    let onCapture: (UIImage) -> Void
+    let onCancel: () -> Void
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        private let onCapture: (UIImage) -> Void
+        private let onCancel: () -> Void
+
+        init(onCapture: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onCapture = onCapture
+            self.onCancel = onCancel
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onCancel()
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                onCapture(image)
+            } else {
+                onCancel()
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCapture: onCapture, onCancel: onCancel)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let controller = UIImagePickerController()
+        controller.sourceType = .camera
+        controller.cameraCaptureMode = .photo
+        controller.allowsEditing = false
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+}

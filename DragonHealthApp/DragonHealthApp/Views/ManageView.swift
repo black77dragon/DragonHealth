@@ -66,6 +66,12 @@ struct ManageView: View {
 
             Section("Data & Backup") {
                 NavigationLink {
+                    FoodLibraryTransferView()
+                } label: {
+                    Label("Food Library Transfer", systemImage: "arrow.up.arrow.down.square")
+                }
+
+                NavigationLink {
                     BackupSettingsView()
                 } label: {
                     Label("iCloud Backup", systemImage: "icloud")
@@ -83,6 +89,12 @@ struct ManageView: View {
                     HealthSyncSettingsView()
                 } label: {
                     Label("Apple Health", systemImage: "heart")
+                }
+
+                NavigationLink {
+                    MealPhotoAISettingsView()
+                } label: {
+                    Label("Meal Photo AI", systemImage: "sparkles")
                 }
 
                 NavigationLink {
@@ -109,6 +121,78 @@ struct ManageView: View {
             }
         }
         .navigationTitle("Manage")
+    }
+}
+
+private struct MealPhotoAISettingsView: View {
+    @State private var apiKey = ""
+    @State private var showAPIKey = false
+    @State private var statusMessage: String?
+
+    var body: some View {
+        Form {
+            Section("API Key") {
+                if showAPIKey {
+                    TextField("OpenAI API Key", text: $apiKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                } else {
+                    SecureField("OpenAI API Key", text: $apiKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                Toggle("Show API Key", isOn: $showAPIKey)
+            }
+
+            Section {
+                Button("Save") {
+                    let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else {
+                        statusMessage = "Enter an API key."
+                        return
+                    }
+                    _ = KeychainStore.write(trimmed, for: .openAIApiKey)
+                    statusMessage = "Saved to Keychain."
+                }
+                .glassButton(.text)
+
+                Button("Clear API Key", role: .destructive) {
+                    _ = KeychainStore.delete(.openAIApiKey)
+                    apiKey = ""
+                    statusMessage = "Cleared."
+                }
+                .glassButton(.text)
+            }
+
+            if let statusMessage {
+                Section {
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Notes") {
+                Text("This key is used for meal photo analysis. It is stored locally in the iOS Keychain.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Optional Info.plist fallback keys: OPENAI_API_KEY and OPENAI_VISION_MODEL.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let loadedKey = MealPhotoAIConfig.apiKey(), !loadedKey.isEmpty {
+                    Text("API key loaded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Model: \(MealPhotoAIConfig.model())")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Meal Photo AI")
+        .onAppear {
+            apiKey = KeychainStore.read(.openAIApiKey) ?? ""
+        }
     }
 }
 
@@ -635,6 +719,8 @@ struct BackupSettingsView: View {
     var body: some View {
         Form {
             Section("iCloud Backup") {
+                BackupScopeInfoRow()
+
                 if backupManager.iCloudAvailable {
                     if let lastBackupDate = backupManager.lastBackupDate {
                         Text("Last backup: \(formatted(lastBackupDate))")
@@ -707,6 +793,8 @@ struct RestoreBackupView: View {
     var body: some View {
         Form {
             Section("Restore Backup") {
+                BackupScopeInfoRow()
+
                 if backupManager.iCloudAvailable {
                     if backupManager.backups.isEmpty {
                         Text("No backups available.")
@@ -789,6 +877,32 @@ struct RestoreBackupView: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+}
+
+struct BackupScopeInfoRow: View {
+    @State private var showingScopeDetails = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Backup scope: database only")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button {
+                showingScopeDetails = true
+            } label: {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Backup scope details")
+        }
+        .alert("Backup Scope", isPresented: $showingScopeDetails) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("iCloud backup and restore include only DragonHealth database data. Document files, food images, and profile photo files are not included.")
+        }
     }
 }
 

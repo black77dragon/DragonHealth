@@ -12,6 +12,7 @@ struct TodayView: View {
     @State private var scoreSummary: DailyScoreSummary?
     @State private var showingQuickAdd = false
     @State private var showingVoiceLog = false
+    @State private var showingPhotoLog = false
     @State private var editingEntry: DailyLogEntry?
     @State private var viewingEntry: DailyLogEntry?
     @State private var showingDisplaySettings = false
@@ -127,6 +128,13 @@ struct TodayView: View {
                 }
                 .labelStyle(.iconOnly)
                 .glassButton(.icon)
+                Button {
+                    showingPhotoLog = true
+                } label: {
+                    Label("Photo Log", systemImage: "camera")
+                }
+                .labelStyle(.iconOnly)
+                .glassButton(.icon)
             }
         }
         .sheet(isPresented: $showingDisplaySettings) {
@@ -170,6 +178,41 @@ struct TodayView: View {
                 foodItems: store.foodItems.filter { !$0.kind.isComposite },
                 units: store.units,
                 onSave: { mealSlot, items, _ in
+                    Task {
+                        var savedCount = 0
+                        for item in items {
+                            guard let categoryID = item.categoryID,
+                                  let portion = item.portion else { continue }
+                            let trimmedNotes = item.notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                            let notes = trimmedNotes.isEmpty && item.matchedFoodID == nil ? item.foodText : trimmedNotes
+                            await store.logPortion(
+                                date: Date(),
+                                mealSlotID: mealSlot.id,
+                                categoryID: categoryID,
+                                portion: Portion(portion),
+                                amountValue: item.amountValue,
+                                amountUnitID: item.amountUnitID,
+                                notes: notes.isEmpty ? nil : notes,
+                                foodItemID: item.matchedFoodID
+                            )
+                            savedCount += 1
+                        }
+                        await loadToday()
+                        if savedCount > 0 {
+                            showSaveConfirmation("data is successfully stored")
+                        }
+                    }
+                }
+            )
+        }
+        .sheet(isPresented: $showingPhotoLog) {
+            MealPhotoLogSheet(
+                categories: store.categories.filter { $0.isEnabled },
+                mealSlots: store.mealSlots,
+                foodItems: store.foodItems.filter { !$0.kind.isComposite },
+                units: store.units,
+                preselectedMealSlotID: store.currentMealSlotID(),
+                onSave: { mealSlot, items in
                     Task {
                         var savedCount = 0
                         for item in items {

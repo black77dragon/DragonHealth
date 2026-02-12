@@ -9,6 +9,8 @@ struct BackupRestoreView: View {
     var body: some View {
         Form {
             Section("iCloud Backup") {
+                BackupScopeInfoRow()
+
                 if backupManager.iCloudAvailable {
                     if let lastBackupDate = backupManager.lastBackupDate {
                         Text("Last backup: \(formatted(lastBackupDate))")
@@ -60,6 +62,8 @@ struct BackupRestoreView: View {
             }
 
             Section("Restore Backup") {
+                BackupScopeInfoRow()
+
                 if backupManager.iCloudAvailable {
                     if backupManager.backups.isEmpty {
                         Text("No backups available.")
