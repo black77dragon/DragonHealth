@@ -750,6 +750,12 @@ struct BackupSettingsView: View {
                     }
                     .glassButton(.text)
                     .disabled(backupManager.isBackingUp || backupManager.isRestoring)
+
+                    if let statusMessage = backupManager.manualBackupStatusMessage {
+                        Text(statusMessage)
+                            .font(.caption)
+                            .foregroundStyle(backupManager.manualBackupStatusIsError ? .red : .green)
+                    }
                 } else {
                     Text("iCloud is not available. Sign in to iCloud to enable backups.")
                         .font(.caption)

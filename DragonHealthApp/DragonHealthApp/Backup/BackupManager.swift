@@ -12,6 +12,8 @@ final class BackupManager: ObservableObject {
     @Published private(set) var backups: [BackupRecord] = []
     @Published private(set) var isRestoring = false
     @Published private(set) var lastRestoreError: String?
+    @Published private(set) var manualBackupStatusMessage: String?
+    @Published private(set) var manualBackupStatusIsError = false
 
     private let worker: BackupWorker
     private let logger = AppLogger(category: .backup)
@@ -51,6 +53,8 @@ final class BackupManager: ObservableObject {
     func performManualBackup(note: String?) {
         guard !isBackingUp else { return }
         isBackingUp = true
+        manualBackupStatusMessage = nil
+        manualBackupStatusIsError = false
         Task {
             let outcome = await worker.performBackupIfNeeded(force: true, note: note)
             let status = await worker.loadStatus()
@@ -58,7 +62,12 @@ final class BackupManager: ObservableObject {
             backups = await worker.fetchBackups()
             isBackingUp = false
             if let errorMessage = outcome.errorMessage {
+                manualBackupStatusMessage = "Backup failed."
+                manualBackupStatusIsError = true
                 logger.error("backup_manual_failed", metadata: ["error": errorMessage])
+            } else if outcome.success {
+                manualBackupStatusMessage = "Backup successful."
+                manualBackupStatusIsError = false
             }
         }
     }

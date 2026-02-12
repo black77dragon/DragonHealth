@@ -93,13 +93,14 @@ struct HistoryView: View {
         }
         .navigationTitle("History")
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showingQuickAdd = true
                 } label: {
                     Image(systemName: "plus")
+                        .glassLabel(.icon)
                 }
-                .glassButton(.icon)
+                .buttonStyle(.plain)
                 .accessibilityLabel("Add entry")
             }
         }

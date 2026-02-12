@@ -37,9 +37,10 @@ struct UnitsView: View {
                     showingAdd = true
                 } label: {
                     Label("Add Unit", systemImage: "plus")
+                        .labelStyle(.iconOnly)
+                        .glassLabel(.icon)
                 }
-                .labelStyle(.iconOnly)
-                .glassButton(.icon)
+                .buttonStyle(.plain)
             }
         }
         .sheet(isPresented: $showingAdd) {

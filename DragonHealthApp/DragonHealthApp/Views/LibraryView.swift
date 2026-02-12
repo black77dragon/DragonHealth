@@ -51,9 +51,10 @@ struct LibraryView: View {
                     showingAddTypePicker = true
                 } label: {
                     Label("Add Food", systemImage: "plus")
+                        .labelStyle(.iconOnly)
+                        .glassLabel(.icon)
                 }
-                .labelStyle(.iconOnly)
-                .glassButton(.icon)
+                .buttonStyle(.plain)
             }
         }
         .sheet(isPresented: $showingAdd) {
@@ -176,8 +177,9 @@ struct FoodItemRow: View {
                     Text("®")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .glassLabel(.icon)
                 }
-                .glassButton(.icon)
+                .buttonStyle(.plain)
                 .accessibilityLabel("Unsplash photo credit")
             }
             if showsFavorite, item.isFavorite {
@@ -230,7 +232,11 @@ struct FoodThumbnailView: View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(.secondarySystemBackground))
-            if let remoteURL, let url = URL(string: remoteURL) {
+            if let image = loadImage() {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if let remoteURL, let url = URL(string: remoteURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
@@ -245,10 +251,6 @@ struct FoodThumbnailView: View {
                         fallbackImageView()
                     }
                 }
-            } else if let image = loadImage() {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
             } else {
                 fallbackImageView()
             }
@@ -374,7 +376,7 @@ private struct FoodEntrySheet: View {
                         HStack(alignment: .top, spacing: 16) {
                             FoodPhotoPreview(
                                 image: selectedImage,
-                                remoteURL: (selectedAttribution ?? existingAttribution)?.remoteURL
+                                remoteURL: displayedRemoteURL
                             )
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Source")
@@ -471,7 +473,7 @@ private struct FoodEntrySheet: View {
                             }
                         }
 
-                        if let attribution = selectedAttribution ?? existingAttribution {
+                        if let attribution = displayedAttribution {
                             FoodPhotoAttributionView(attribution: attribution)
                         }
                     }
@@ -767,6 +769,16 @@ private struct FoodEntrySheet: View {
         selectedImage != nil || existingImagePath != nil
     }
 
+    private var displayedAttribution: FoodImageAttribution? {
+        guard photoSource == .unsplash else { return nil }
+        return resolvedAttribution()
+    }
+
+    private var displayedRemoteURL: String? {
+        guard photoSelectionKind != .local else { return nil }
+        return displayedAttribution?.remoteURL
+    }
+
     private var parsedAmount: Double? {
         let trimmed = amountText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -964,7 +976,11 @@ private struct FoodPhotoPreview: View {
         ZStack {
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color(.secondarySystemBackground))
-            if let remoteURL, let url = URL(string: remoteURL) {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if let remoteURL, let url = URL(string: remoteURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
@@ -979,10 +995,6 @@ private struct FoodPhotoPreview: View {
                         fallbackView()
                     }
                 }
-            } else if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
             } else {
                 fallbackView()
             }

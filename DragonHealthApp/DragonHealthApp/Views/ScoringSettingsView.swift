@@ -79,8 +79,9 @@ struct ScoringSettingsView: View {
                     showingInfo = true
                 } label: {
                     Image(systemName: "info.circle.fill")
+                        .glassLabel(.icon)
                 }
-                .glassButton(.icon)
+                .buttonStyle(.plain)
                 .accessibilityLabel("Scoring help")
             }
         }

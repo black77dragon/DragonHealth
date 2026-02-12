@@ -5,6 +5,40 @@ import UIKit
 
 private enum MealPhotoConfidencePolicy {
     static let reviewThreshold: Double = 0.60
+    static let highConfidenceThreshold: Double = 0.80
+}
+
+private enum MealPhotoConfidenceRAG {
+    case red
+    case amber
+    case green
+
+    init(confidence: Double) {
+        let clamped = min(max(confidence, 0), 1)
+        if clamped < MealPhotoConfidencePolicy.reviewThreshold {
+            self = .red
+        } else if clamped < MealPhotoConfidencePolicy.highConfidenceThreshold {
+            self = .amber
+        } else {
+            self = .green
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .red: return "RED"
+        case .amber: return "AMBER"
+        case .green: return "GREEN"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .red: return .red
+        case .amber: return .orange
+        case .green: return .green
+        }
+    }
 }
 
 struct MealPhotoLogSheet: View {
@@ -119,9 +153,9 @@ struct MealPhotoLogSheet: View {
                                 .foregroundStyle(.orange)
 
                             ForEach(lowConfidenceItems) { item in
-                                Text("\(item.foodText): \((item.confidence * 100).rounded().cleanNumber)% confidence")
+                                Text("\(item.foodText): \((item.confidence * 100).rounded().cleanNumber)% confidence (\(MealPhotoConfidenceRAG(confidence: item.confidence).label))")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(MealPhotoConfidenceRAG(confidence: item.confidence).color)
                             }
 
                             Toggle("I reviewed low-confidence items", isOn: $lowConfidenceReviewed)
@@ -319,21 +353,70 @@ private struct MealPhotoDraftRow: View {
     let categories: [Core.Category]
     let foodItems: [FoodItem]
     let units: [FoodUnit]
+    @State private var showingFoodPicker = false
     private var isLowConfidence: Bool {
         item.confidence < MealPhotoConfidencePolicy.reviewThreshold
     }
+    private var confidenceRAG: MealPhotoConfidenceRAG {
+        MealPhotoConfidenceRAG(confidence: item.confidence)
+    }
+    private var selectedCategory: Core.Category? {
+        guard let categoryID = item.categoryID else { return nil }
+        return categories.first(where: { $0.id == categoryID })
+    }
+    private var selectedFoodItem: FoodItem? {
+        guard let foodID = item.matchedFoodID else { return nil }
+        return foodItems.first(where: { $0.id == foodID })
+    }
+    private var foodSelectionSummary: String {
+        if let selectedFoodItem {
+            return selectedFoodItem.name
+        }
+        let detected = item.foodText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !detected.isEmpty {
+            return detected
+        }
+        return selectedCategory == nil ? "Choose category first" : "Choose food"
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TextField("Food", text: $item.foodText)
-
-            Picker("Food Library", selection: $item.matchedFoodID) {
-                Text("Custom").tag(UUID?.none)
-                ForEach(foodItems) { food in
-                    Text(food.name).tag(Optional(food.id))
+        VStack(alignment: .leading, spacing: 16) {
+            Picker("Category", selection: $item.categoryID) {
+                Text("Select").tag(UUID?.none)
+                ForEach(categories) { category in
+                    Text(category.name).tag(Optional(category.id))
                 }
             }
             .pickerStyle(.menu)
+            .padding(.vertical, 2)
+
+            Button {
+                showingFoodPicker = true
+            } label: {
+                HStack {
+                    Text("Food Library")
+                    Spacer()
+                    Text(foodSelectionSummary)
+                        .foregroundStyle(item.matchedFoodID == nil ? .secondary : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedCategory == nil)
+            .padding(.vertical, 2)
+            .sheet(isPresented: $showingFoodPicker) {
+                NavigationStack {
+                    MealPhotoFoodPicker(
+                        category: selectedCategory,
+                        foodItems: foodItems,
+                        selectedFoodID: $item.matchedFoodID
+                    )
+                }
+            }
             .onChange(of: item.matchedFoodID) { _, newValue in
                 guard let newValue,
                       let food = foodItems.first(where: { $0.id == newValue }) else { return }
@@ -345,12 +428,19 @@ private struct MealPhotoDraftRow: View {
                     item.amountUnitID = unitID
                 }
             }
-
-            Picker("Category", selection: $item.categoryID) {
-                Text("Select").tag(UUID?.none)
-                ForEach(categories) { category in
-                    Text(category.name).tag(Optional(category.id))
+            .onChange(of: item.categoryID) { _, newCategoryID in
+                guard let selectedFoodID = item.matchedFoodID,
+                      let selectedFood = foodItems.first(where: { $0.id == selectedFoodID }) else {
+                    return
                 }
+                if selectedFood.categoryID != newCategoryID {
+                    item.matchedFoodID = nil
+                }
+            }
+
+            if item.matchedFoodID == nil {
+                TextField("Custom Food Name", text: $item.foodText)
+                    .padding(.vertical, 2)
             }
 
             HStack {
@@ -368,9 +458,17 @@ private struct MealPhotoDraftRow: View {
             TextField("Portion", text: portionBinding)
                 .keyboardType(.decimalPad)
 
-            Text("AI confidence: \((item.confidence * 100).rounded().cleanNumber)%")
-                .font(.caption)
-                .foregroundStyle(isLowConfidence ? .orange : .secondary)
+            HStack(spacing: 8) {
+                Text("AI confidence: \((item.confidence * 100).rounded().cleanNumber)%")
+                Text(confidenceRAG.label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(confidenceRAG.color)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(confidenceRAG.color.opacity(0.15), in: Capsule())
+            }
+            .font(.caption)
+            .foregroundStyle(confidenceRAG.color)
 
             if isLowConfidence {
                 Text("Low confidence: verify food and portion before saving.")
@@ -384,6 +482,7 @@ private struct MealPhotoDraftRow: View {
                     .foregroundStyle(.red)
             }
         }
+        .padding(.vertical, 4)
     }
 
     private var amountBinding: Binding<String> {
@@ -420,6 +519,119 @@ private struct MealPhotoDraftRow: View {
         if item.portion == nil { missing.append("portion") }
         if item.foodText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { missing.append("food") }
         return missing
+    }
+}
+
+private enum MealPhotoFoodPickerFilter: String, CaseIterable, Identifiable {
+    case all
+    case favorites
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all:
+            return "All"
+        case .favorites:
+            return "Favorites"
+        }
+    }
+}
+
+private struct MealPhotoFoodPicker: View {
+    let category: Core.Category?
+    let foodItems: [FoodItem]
+    @Binding var selectedFoodID: UUID?
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+    @State private var filter: MealPhotoFoodPickerFilter = .all
+
+    private var categoryFoods: [FoodItem] {
+        guard let categoryID = category?.id else { return [] }
+        return foodItems
+            .filter { $0.categoryID == categoryID }
+            .sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
+    }
+
+    private var filteredFoods: [FoodItem] {
+        var results = categoryFoods
+        if filter == .favorites {
+            results = results.filter(\.isFavorite)
+        }
+        let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return results }
+        return results.filter { item in
+            item.name.localizedStandardContains(term) || (item.notes ?? "").localizedStandardContains(term)
+        }
+    }
+
+    var body: some View {
+        List {
+            if category == nil {
+                Section {
+                    Text("Select a category first. Food choices are filtered by the selected category.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section("Filter") {
+                    Picker("Filter", selection: $filter) {
+                        ForEach(MealPhotoFoodPickerFilter.allCases) { option in
+                            Text(option.label).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                Section("Food Items") {
+                    Button {
+                        selectedFoodID = nil
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Text("Custom")
+                            Spacer()
+                            if selectedFoodID == nil {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    if filteredFoods.isEmpty {
+                        Text("No foods match this category/filter.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(filteredFoods) { food in
+                            Button {
+                                selectedFoodID = food.id
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    Text(food.name)
+                                    Spacer()
+                                    if selectedFoodID == food.id {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(Color.accentColor)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .environment(\.defaultMinListRowHeight, 50)
+        .navigationTitle(category?.name ?? "Food Library")
+        .searchable(
+            text: $searchText,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "Search foods"
+        )
     }
 }
 

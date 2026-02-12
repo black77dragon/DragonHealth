@@ -118,9 +118,10 @@ struct BodyMetricsView: View {
                     showingAdd = true
                 } label: {
                     Label("Add", systemImage: "plus")
+                        .labelStyle(.iconOnly)
+                        .glassLabel(.icon)
                 }
-                .labelStyle(.iconOnly)
-                .glassButton(.icon)
+                .buttonStyle(.plain)
             }
         }
         .sheet(isPresented: $showingAdd) {

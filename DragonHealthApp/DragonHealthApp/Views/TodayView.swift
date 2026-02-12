@@ -106,35 +106,44 @@ struct TodayView: View {
             ToolbarItem(placement: .principal) {
                 TodayNavTitleView(date: store.currentDay)
             }
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    showingDisplaySettings = true
-                } label: {
-                    Image(systemName: "gearshape")
+            ToolbarItem(placement: .topBarTrailing) {
+                HStack(spacing: 6) {
+                    Button {
+                        showingDisplaySettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .glassLabel(.icon)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Display settings")
+
+                    Button {
+                        showingQuickAdd = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .glassLabel(.icon)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Quick Add")
+
+                    Button {
+                        showingVoiceLog = true
+                    } label: {
+                        Image(systemName: "mic")
+                            .glassLabel(.icon)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Voice Log")
+
+                    Button {
+                        showingPhotoLog = true
+                    } label: {
+                        Image(systemName: "camera")
+                            .glassLabel(.icon)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Photo Log")
                 }
-                .glassButton(.icon)
-                .accessibilityLabel("Display settings")
-                Button {
-                    showingQuickAdd = true
-                } label: {
-                    Label("Quick Add", systemImage: "plus")
-                }
-                .labelStyle(.iconOnly)
-                .glassButton(.icon)
-                Button {
-                    showingVoiceLog = true
-                } label: {
-                    Label("Voice Log", systemImage: "mic")
-                }
-                .labelStyle(.iconOnly)
-                .glassButton(.icon)
-                Button {
-                    showingPhotoLog = true
-                } label: {
-                    Label("Photo Log", systemImage: "camera")
-                }
-                .labelStyle(.iconOnly)
-                .glassButton(.icon)
             }
         }
         .sheet(isPresented: $showingDisplaySettings) {
