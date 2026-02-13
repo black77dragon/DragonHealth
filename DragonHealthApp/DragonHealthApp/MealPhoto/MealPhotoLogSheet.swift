@@ -128,7 +128,7 @@ struct MealPhotoLogSheet: View {
                     Button {
                         analyzePhoto()
                     } label: {
-                        Label("Analyze Photo", systemImage: "sparkles")
+                        Label("AI Detect Foods", systemImage: "sparkles")
                     }
                     .glassButton(.text)
                     .disabled(!canAnalyze)
@@ -141,6 +141,12 @@ struct MealPhotoLogSheet: View {
                     if let parseError {
                         Text(parseError)
                             .foregroundStyle(.red)
+                            .font(.footnote)
+                    }
+
+                    if !draftItems.isEmpty {
+                        Text("Detected \(draftItems.count) possible food item\(draftItems.count == 1 ? "" : "s").")
+                            .foregroundStyle(.secondary)
                             .font(.footnote)
                     }
                 }
@@ -176,7 +182,10 @@ struct MealPhotoLogSheet: View {
                                 item: $item,
                                 categories: categories,
                                 foodItems: availableFoods,
-                                units: units
+                                units: units,
+                                onDelete: {
+                                    deleteDraftItem(id: item.id)
+                                }
                             )
                         }
                     }
@@ -346,6 +355,11 @@ struct MealPhotoLogSheet: View {
         guard let portion = item.portion, portion > 0 else { return false }
         return true
     }
+
+    private func deleteDraftItem(id: UUID) {
+        draftItems.removeAll { $0.id == id }
+        lowConfidenceReviewed = false
+    }
 }
 
 private struct MealPhotoDraftRow: View {
@@ -353,6 +367,7 @@ private struct MealPhotoDraftRow: View {
     let categories: [Core.Category]
     let foodItems: [FoodItem]
     let units: [FoodUnit]
+    let onDelete: () -> Void
     @State private var showingFoodPicker = false
     private var isLowConfidence: Bool {
         item.confidence < MealPhotoConfidencePolicy.reviewThreshold
@@ -481,6 +496,14 @@ private struct MealPhotoDraftRow: View {
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
+
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Text("⛔️ Delete Item")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.top, 2)
         }
         .padding(.vertical, 4)
     }

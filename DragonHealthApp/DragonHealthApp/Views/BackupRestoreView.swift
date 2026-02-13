@@ -143,7 +143,11 @@ struct BackupRestoreView: View {
                 restoreCandidate = nil
             }
         } message: { backup in
-            Text("Restore backup from \(formatted(backup.createdAt))? This will replace your current data.")
+            Text(
+                "Restore backup from \(formatted(backup.createdAt))? "
+                + "This replaces your current tracked database data (meals, body metrics, food library, settings). "
+                + "Documents, food photos, and profile photo files are not part of backup/restore."
+            )
         }
     }
 

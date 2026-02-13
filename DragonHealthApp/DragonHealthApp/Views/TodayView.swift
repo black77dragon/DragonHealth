@@ -15,7 +15,6 @@ struct TodayView: View {
     @State private var showingPhotoLog = false
     @State private var editingEntry: DailyLogEntry?
     @State private var viewingEntry: DailyLogEntry?
-    @State private var showingDisplaySettings = false
     @State private var saveConfirmationMessage: String?
     @State private var saveConfirmationTask: Task<Void, Never>?
     @AppStorage("today.categoryDisplayStyle") private var categoryDisplayStyleRaw: String = CategoryDisplayStyle.compactRings.rawValue
@@ -34,29 +33,10 @@ struct TodayView: View {
     private var quickAddStyle: QuickAddStyle {
         QuickAddStyle(rawValue: quickAddStyleRaw) ?? .standard
     }
-    private var categoryDisplayBinding: Binding<CategoryDisplayStyle> {
-        Binding(
-            get: { categoryDisplayStyle },
-            set: { categoryDisplayStyleRaw = $0.rawValue }
-        )
-    }
-    private var mealDisplayBinding: Binding<MealDisplayStyle> {
-        Binding(
-            get: { mealDisplayStyle },
-            set: { mealDisplayStyleRaw = $0.rawValue }
-        )
-    }
-    private var quickAddStyleBinding: Binding<QuickAddStyle> {
-        Binding(
-            get: { quickAddStyle },
-            set: { quickAddStyleRaw = $0.rawValue }
-        )
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                TodayHeaderView(adherence: adherence, scoreSummary: scoreSummary)
+                TodayHeaderView(adherence: adherence, scoreSummary: scoreSummary, categories: store.categories)
 
                 let visibleCategories = store.categories.filter { $0.isEnabled }
                 if visibleCategories.isEmpty {
@@ -109,15 +89,6 @@ struct TodayView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 HStack(spacing: 6) {
                     Button {
-                        showingDisplaySettings = true
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .glassLabel(.icon)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Display settings")
-
-                    Button {
                         showingQuickAdd = true
                     } label: {
                         Image(systemName: "plus")
@@ -145,13 +116,6 @@ struct TodayView: View {
                     .accessibilityLabel("Photo Log")
                 }
             }
-        }
-        .sheet(isPresented: $showingDisplaySettings) {
-            TodayDisplaySettingsSheet(
-                categorySelection: categoryDisplayBinding,
-                mealSelection: mealDisplayBinding,
-                quickAddStyle: quickAddStyleBinding
-            )
         }
         .sheet(isPresented: $showingQuickAdd) {
             QuickAddSheet(
@@ -371,26 +335,38 @@ private struct TodayNavTitleView: View {
 private struct TodayHeaderView: View {
     let adherence: DailyAdherenceSummary?
     let scoreSummary: DailyScoreSummary?
+    let categories: [Core.Category]
+
+    private struct GoalAction {
+        let text: String
+        let severity: Double
+    }
+
+    private var goalSummaryText: String? {
+        guard let adherence else { return nil }
+        guard !adherence.categoryResults.isEmpty else { return "No category goals configured yet." }
+        let actions = goalActions(for: adherence)
+        if actions.isEmpty {
+            return "All category goals met."
+        }
+        return actions
+            .prefix(3)
+            .map(\.text)
+            .joined(separator: ", ")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let scoreSummary, let adherence {
-                let metCount = adherence.categoryResults.filter { $0.targetMet }.count
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    ScoreBadge(score: scoreSummary.overallScore)
-                    Text("-")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text("\(metCount)/\(adherence.categoryResults.count) on track")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            } else if let scoreSummary {
+            if let scoreSummary {
                 ScoreBadge(score: scoreSummary.overallScore)
-            } else if let adherence {
-                let metCount = adherence.categoryResults.filter { $0.targetMet }.count
-                Text("\(metCount)/\(adherence.categoryResults.count) on track")
+                if let goalSummaryText {
+                    Text(goalSummaryText)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+            } else if let goalSummaryText {
+                Text(goalSummaryText)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
@@ -405,6 +381,115 @@ private struct TodayHeaderView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.secondarySystemBackground))
         )
+    }
+
+    private func goalActions(for adherence: DailyAdherenceSummary) -> [GoalAction] {
+        let categoriesByID = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
+        return adherence.categoryResults
+            .compactMap { result in
+                guard !result.targetMet else { return nil }
+                guard let category = categoriesByID[result.categoryID] else { return nil }
+                return goalAction(for: category, total: result.total)
+            }
+            .sorted { $0.severity > $1.severity }
+    }
+
+    private func goalAction(for category: Core.Category, total: Double) -> GoalAction? {
+        switch category.targetRule {
+        case .exact(let target):
+            let minValue = max(0, target - TargetRule.exactTolerance)
+            let maxValue = target + TargetRule.exactTolerance
+            if total < minValue {
+                return underTargetAction(category: category, missing: minValue - total, targetReference: minValue)
+            }
+            if total > maxValue {
+                return overTargetAction(category: category, excess: total - maxValue, targetReference: maxValue)
+            }
+        case .atLeast(let target):
+            if total < target {
+                return underTargetAction(category: category, missing: target - total, targetReference: target)
+            }
+        case .atMost(let target):
+            if total > target {
+                return overTargetAction(category: category, excess: total - target, targetReference: target)
+            }
+        case .range(let minValue, let maxValue):
+            if total < minValue {
+                return underTargetAction(category: category, missing: minValue - total, targetReference: minValue)
+            }
+            if total > maxValue {
+                return overTargetAction(category: category, excess: total - maxValue, targetReference: maxValue)
+            }
+        }
+        return nil
+    }
+
+    private func underTargetAction(category: Core.Category, missing: Double, targetReference: Double) -> GoalAction {
+        let displayName = displayCategoryName(category.name)
+        let intensity = intensityText(for: missing)
+        let safeTarget = max(targetReference, 0.1)
+        let severity = missing / safeTarget
+
+        if isDrinkCategory(category) {
+            return GoalAction(text: "drink \(missing.cleanNumber)\(category.unitName.lowercased())", severity: severity)
+        }
+        if isSportsCategory(category) {
+            return GoalAction(text: "add \(missing.cleanNumber) \(category.unitName) activity", severity: severity)
+        }
+        if isCarbCategory(displayName) {
+            return GoalAction(text: "eat \(intensity)Carb", severity: severity)
+        }
+        if isProteinCategory(displayName) {
+            return GoalAction(text: "add \(intensity)protein", severity: severity)
+        }
+        return GoalAction(text: "add \(intensity)\(displayName.lowercased())", severity: severity)
+    }
+
+    private func overTargetAction(category: Core.Category, excess: Double, targetReference: Double) -> GoalAction {
+        let displayName = displayCategoryName(category.name).lowercased()
+        let safeTarget = max(targetReference, 0.1)
+        let severity = excess / safeTarget
+        return GoalAction(
+            text: "reduce \(displayName) by \(excess.cleanNumber) \(category.unitName)",
+            severity: severity
+        )
+    }
+
+    private func intensityText(for amount: Double) -> String {
+        if amount >= 1 {
+            return "much more "
+        }
+        if amount >= 0.4 {
+            return "more "
+        }
+        return "a bit more "
+    }
+
+    private func displayCategoryName(_ name: String) -> String {
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "starchy sides" || normalized == "starchy items" {
+            return "Carb"
+        }
+        return name
+    }
+
+    private func isCarbCategory(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return lower == "carb" || lower.contains("starch")
+    }
+
+    private func isProteinCategory(_ name: String) -> Bool {
+        name.lowercased().contains("protein")
+    }
+
+    private func isDrinkCategory(_ category: Core.Category) -> Bool {
+        let lowerName = category.name.lowercased()
+        let lowerUnit = category.unitName.lowercased()
+        return lowerName.contains("drink") || lowerUnit == "l" || lowerUnit == "ml"
+    }
+
+    private func isSportsCategory(_ category: Core.Category) -> Bool {
+        category.name.lowercased().contains("sport")
     }
 }
 
@@ -1865,53 +1950,6 @@ private enum MealDisplayStyle: String, CaseIterable, Identifiable {
     }
 }
 
-private struct TodayDisplaySettingsSheet: View {
-    @Binding var categorySelection: CategoryDisplayStyle
-    @Binding var mealSelection: MealDisplayStyle
-    @Binding var quickAddStyle: QuickAddStyle
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Categories") {
-                    Picker("Category style", selection: $categorySelection) {
-                        ForEach(CategoryDisplayStyle.allCases) { style in
-                            Text(style.label).tag(style)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                Section("Meals") {
-                    Picker("Meal style", selection: $mealSelection) {
-                        ForEach(MealDisplayStyle.allCases) { style in
-                            Text(style.label).tag(style)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                Section("Quick Add") {
-                    Picker("Flow", selection: $quickAddStyle) {
-                        ForEach(QuickAddStyle.allCases) { style in
-                            Text(style.label).tag(style)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-            }
-            .navigationTitle("Display")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .glassButton(.text)
-                }
-            }
-        }
-    }
-}
-
 private enum EntryInputMode: String, CaseIterable, Identifiable {
     case portion
     case amount
@@ -2945,7 +2983,7 @@ enum CategoryColorPalette {
         if lower.contains("fruit") {
             return Color(red: 0.72, green: 0.89, blue: 0.90)
         }
-        if lower.contains("starch") || lower.contains("grain") || lower.contains("side") {
+        if lower.contains("starch") || lower.contains("grain") || lower.contains("side") || lower.contains("carb") {
             return Color(red: 0.91, green: 0.78, blue: 0.63)
         }
         if lower.contains("dairy") {
@@ -2977,7 +3015,7 @@ private enum CategoryIconPalette {
         if lower.contains("fruit") {
             return "apple.logo"
         }
-        if lower.contains("starch") || lower.contains("grain") || lower.contains("side") {
+        if lower.contains("starch") || lower.contains("grain") || lower.contains("side") || lower.contains("carb") {
             return preferredSymbol(["bagel", "baguette", "fork.knife"], fallback: "fork.knife")
         }
         if lower.contains("dairy") {

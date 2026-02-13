@@ -160,10 +160,12 @@ struct OpenAIMealPhotoClient {
         let allowedCategories = categoryNames.joined(separator: ", ")
         let imageURL = "data:image/jpeg;base64,\(imageData.base64EncodedString())"
         let prompt = """
-        Analyze this meal image and return visible food items with estimated portions.
+        Analyze this meal image and return all visible and plausible food items with estimated portions.
         Output JSON only.
         Rules:
-        - Return 1 to 8 eaten food items.
+        - Return all distinct food items you can identify (not just a sample), between 1 and 20 items.
+        - If a food is only a plausible guess, include it with a lower confidence instead of omitting it.
+        - Do not duplicate the same food item multiple times.
         - Use `portionEstimate` in 0.1 steps between 0.1 and 6.0.
         - If known, set `amountValue` and `amountUnit` using one of: g, ml, pc, portion.
         - If unknown, set amount fields to null.
@@ -214,7 +216,7 @@ struct OpenAIMealPhotoClient {
                 "items": [
                     "type": "array",
                     "minItems": 1,
-                    "maxItems": 8,
+                    "maxItems": 20,
                     "items": [
                         "type": "object",
                         "additionalProperties": false,

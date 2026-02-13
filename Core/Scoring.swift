@@ -277,6 +277,16 @@ private struct ScoreProfileTemplate {
             curve: .linear,
             capOverAtTarget: false
         ),
+        "carb": ScoreProfileTemplate(
+            weight: 0.12,
+            underPenaltyPerUnit: 0.6,
+            overPenaltyPerUnit: 1.2,
+            underSoftLimitMultiplier: 0.5,
+            overSoftLimitMultiplier: 0.5,
+            minSoftLimit: 0.5,
+            curve: .quadratic,
+            capOverAtTarget: false
+        ),
         "starchysides": ScoreProfileTemplate(
             weight: 0.12,
             underPenaltyPerUnit: 0.6,

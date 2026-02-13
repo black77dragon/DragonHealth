@@ -28,6 +28,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var compensationRules: [Core.CompensationRule] = []
     @Published private(set) var settings: Core.AppSettings = .defaultValue
     @Published var refreshToken = UUID()
+    @Published private(set) var operationErrorMessage: String?
 
     private let db: SQLiteDatabase?
     private let calendar: Calendar
@@ -55,6 +56,10 @@ final class AppStore: ObservableObject {
 
     var currentDay: Date {
         dayBoundary.dayStart(for: Date(), calendar: calendar)
+    }
+
+    func clearOperationError() {
+        operationErrorMessage = nil
     }
 
     func currentMealSlotID(for date: Date = Date()) -> UUID? {
@@ -116,6 +121,14 @@ final class AppStore: ObservableObject {
         return (components.hour ?? 0) * 60 + (components.minute ?? 0)
     }
 
+    private func recordOperationError(_ message: String) {
+        operationErrorMessage = message
+    }
+
+    private func handleOperationError(_ context: String, _ error: Error) {
+        recordOperationError("\(context): \(error.localizedDescription)")
+    }
+
     func loadAll() async {
         guard let db else { return }
         do {
@@ -124,6 +137,22 @@ final class AppStore: ObservableObject {
                 loadedCategories = AppDefaults.categories
                 for category in loadedCategories {
                     try await db.upsertCategory(category)
+                }
+            }
+            if !loadedCategories.contains(where: { Self.normalizedCategoryName($0.name) == "carb" }) {
+                var renamedCategories = loadedCategories
+                var didRename = false
+                for index in renamedCategories.indices {
+                    if Self.isLegacyCarbCategoryName(renamedCategories[index].name) {
+                        renamedCategories[index].name = "Carb"
+                        didRename = true
+                    }
+                }
+                if didRename {
+                    for category in renamedCategories {
+                        try await db.upsertCategory(category)
+                    }
+                    loadedCategories = try await db.fetchCategories()
                 }
             }
 
@@ -237,7 +266,7 @@ final class AppStore: ObservableObject {
             await loadAll()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Category error: \(error.localizedDescription)")
+            handleOperationError("Category error", error)
         }
     }
 
@@ -248,7 +277,7 @@ final class AppStore: ObservableObject {
             await loadAll()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Category error: \(error.localizedDescription)")
+            handleOperationError("Category error", error)
         }
     }
 
@@ -259,7 +288,7 @@ final class AppStore: ObservableObject {
             scoreProfiles = try await db.fetchScoreProfiles()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Scoring error: \(error.localizedDescription)")
+            handleOperationError("Scoring error", error)
         }
     }
 
@@ -270,7 +299,7 @@ final class AppStore: ObservableObject {
             scoreProfiles = try await db.fetchScoreProfiles()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Scoring error: \(error.localizedDescription)")
+            handleOperationError("Scoring error", error)
         }
     }
 
@@ -281,7 +310,7 @@ final class AppStore: ObservableObject {
             compensationRules = try await db.fetchCompensationRules()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Scoring error: \(error.localizedDescription)")
+            handleOperationError("Scoring error", error)
         }
     }
 
@@ -292,7 +321,7 @@ final class AppStore: ObservableObject {
             compensationRules = try await db.fetchCompensationRules()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Scoring error: \(error.localizedDescription)")
+            handleOperationError("Scoring error", error)
         }
     }
 
@@ -303,7 +332,7 @@ final class AppStore: ObservableObject {
             units = try await db.fetchUnits()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Unit error: \(error.localizedDescription)")
+            handleOperationError("Unit error", error)
         }
     }
 
@@ -314,7 +343,7 @@ final class AppStore: ObservableObject {
             await loadAll()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Meal slot error: \(error.localizedDescription)")
+            handleOperationError("Meal slot error", error)
         }
     }
 
@@ -325,7 +354,7 @@ final class AppStore: ObservableObject {
             await loadAll()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Meal slot error: \(error.localizedDescription)")
+            handleOperationError("Meal slot error", error)
         }
     }
 
@@ -336,7 +365,7 @@ final class AppStore: ObservableObject {
             self.settings = settings
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Settings error: \(error.localizedDescription)")
+            handleOperationError("Settings error", error)
         }
     }
 
@@ -347,7 +376,7 @@ final class AppStore: ObservableObject {
             foodItems = try await db.fetchFoodItems()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Food error: \(error.localizedDescription)")
+            handleOperationError("Food error", error)
         }
     }
 
@@ -363,7 +392,7 @@ final class AppStore: ObservableObject {
             return nil
         } catch {
             let message = "Food import error: \(error.localizedDescription)"
-            loadState = .failed(message)
+            recordOperationError(message)
             return message
         }
     }
@@ -378,7 +407,7 @@ final class AppStore: ObservableObject {
             foodItems = try await db.fetchFoodItems()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Food error: \(error.localizedDescription)")
+            handleOperationError("Food error", error)
         }
     }
 
@@ -389,7 +418,7 @@ final class AppStore: ObservableObject {
             bodyMetrics = try await db.fetchBodyMetrics()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Body metric error: \(error.localizedDescription)")
+            handleOperationError("Body metric error", error)
         }
     }
 
@@ -400,7 +429,7 @@ final class AppStore: ObservableObject {
             careMeetings = try await db.fetchCareMeetings()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Care meeting error: \(error.localizedDescription)")
+            handleOperationError("Care meeting error", error)
         }
     }
 
@@ -411,7 +440,7 @@ final class AppStore: ObservableObject {
             careMeetings = try await db.fetchCareMeetings()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Care meeting error: \(error.localizedDescription)")
+            handleOperationError("Care meeting error", error)
         }
     }
 
@@ -422,7 +451,7 @@ final class AppStore: ObservableObject {
             documents = try await db.fetchDocuments()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Document error: \(error.localizedDescription)")
+            handleOperationError("Document error", error)
         }
     }
 
@@ -433,7 +462,7 @@ final class AppStore: ObservableObject {
             documents = try await db.fetchDocuments()
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Document error: \(error.localizedDescription)")
+            handleOperationError("Document error", error)
         }
     }
 
@@ -461,7 +490,7 @@ final class AppStore: ObservableObject {
             }
             return indicators
         } catch {
-            loadState = .failed("Log error: \(error.localizedDescription)")
+            handleOperationError("Log error", error)
             return [:]
         }
     }
@@ -487,7 +516,7 @@ final class AppStore: ObservableObject {
             }
             return entries.sorted(by: { $0.date < $1.date })
         } catch {
-            loadState = .failed("Log error: \(error.localizedDescription)")
+            handleOperationError("Log error", error)
             return []
         }
     }
@@ -660,7 +689,7 @@ final class AppStore: ObservableObject {
         do {
             return try await db.fetchDailyLog(for: day)
         } catch {
-            loadState = .failed("Log error: \(error.localizedDescription)")
+            handleOperationError("Log error", error)
             return nil
         }
     }
@@ -671,7 +700,7 @@ final class AppStore: ObservableObject {
             try await db.saveDailyLog(log)
             refreshToken = UUID()
         } catch {
-            loadState = .failed("Log error: \(error.localizedDescription)")
+            handleOperationError("Log error", error)
         }
     }
 
@@ -778,6 +807,15 @@ final class AppStore: ObservableObject {
         return true
     }
 
+    private static func normalizedCategoryName(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func isLegacyCarbCategoryName(_ name: String) -> Bool {
+        let normalized = normalizedCategoryName(name)
+        return normalized == "starchy sides" || normalized == "starchy items"
+    }
+
     nonisolated static func databaseURL() -> URL {
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return directory.appendingPathComponent("dragonhealth.sqlite")
@@ -795,7 +833,7 @@ enum AppDefaults {
         Core.Category(name: "Unsweetened Drinks", unitName: "L", isEnabled: true, targetRule: .range(min: 1.0, max: 2.0), sortOrder: 0),
         Core.Category(name: "Vegetables", unitName: "portions", isEnabled: true, targetRule: .atLeast(3.0), sortOrder: 1),
         Core.Category(name: "Fruit", unitName: "portions", isEnabled: true, targetRule: .atLeast(2.0), sortOrder: 2),
-        Core.Category(name: "Starchy Sides", unitName: "portions", isEnabled: true, targetRule: .exact(3.0), sortOrder: 3),
+        Core.Category(name: "Carb", unitName: "portions", isEnabled: true, targetRule: .exact(3.0), sortOrder: 3),
         Core.Category(name: "Protein Sources", unitName: "portions", isEnabled: true, targetRule: .exact(1.0), sortOrder: 4),
         Core.Category(name: "Dairy", unitName: "portions", isEnabled: true, targetRule: .exact(3.0), sortOrder: 5),
         Core.Category(name: "Oils / Fats / Nuts", unitName: "portions", isEnabled: true, targetRule: .range(min: 2.0, max: 3.0), sortOrder: 6),

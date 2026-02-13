@@ -80,6 +80,23 @@ struct ContentView: View {
                 backupManager.performBackupIfNeeded()
                 healthSyncManager.performSyncOnLaunch(store: store)
             }
+            .alert(
+                "Action Failed",
+                isPresented: Binding(
+                    get: { store.operationErrorMessage != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            store.clearOperationError()
+                        }
+                    }
+                )
+            ) {
+                Button("OK", role: .cancel) {
+                    store.clearOperationError()
+                }
+            } message: {
+                Text(store.operationErrorMessage ?? "An unknown error occurred.")
+            }
         }
     }
 

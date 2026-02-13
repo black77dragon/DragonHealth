@@ -109,11 +109,57 @@ public actor SQLiteDatabase: DBGateway {
     }
 
     public func deleteCategory(id: UUID) async throws {
-        let sql = "DELETE FROM categories WHERE id = ?;"
-        let statement = try prepare(sql)
-        defer { sqlite3_finalize(statement) }
-        bindUUID(statement, index: 1, value: id)
-        try step(statement)
+        try execute("BEGIN TRANSACTION;")
+        do {
+            let dailyEntryCount = try scalarCount(
+                "SELECT COUNT(*) FROM daily_entries WHERE category_id = ?;"
+            ) { statement in
+                self.bindUUID(statement, index: 1, value: id)
+            }
+            guard dailyEntryCount == 0 else {
+                throw SQLiteDatabaseError.executionFailed(
+                    "Category can't be deleted because it has logged entries. Disable it instead."
+                )
+            }
+
+            let foodItemCount = try scalarCount(
+                "SELECT COUNT(*) FROM food_items WHERE category_id = ?;"
+            ) { statement in
+                self.bindUUID(statement, index: 1, value: id)
+            }
+            guard foodItemCount == 0 else {
+                throw SQLiteDatabaseError.executionFailed(
+                    "Category can't be deleted because food library items still use it."
+                )
+            }
+
+            let deleteProfileSQL = "DELETE FROM score_profiles WHERE category_id = ?;"
+            let deleteProfileStatement = try prepare(deleteProfileSQL)
+            defer { sqlite3_finalize(deleteProfileStatement) }
+            bindUUID(deleteProfileStatement, index: 1, value: id)
+            try step(deleteProfileStatement)
+
+            let deleteCompensationSQL = """
+            DELETE FROM compensation_rules
+            WHERE from_category_id = ? OR to_category_id = ?;
+            """
+            let deleteCompensationStatement = try prepare(deleteCompensationSQL)
+            defer { sqlite3_finalize(deleteCompensationStatement) }
+            bindUUID(deleteCompensationStatement, index: 1, value: id)
+            bindUUID(deleteCompensationStatement, index: 2, value: id)
+            try step(deleteCompensationStatement)
+
+            let deleteCategorySQL = "DELETE FROM categories WHERE id = ?;"
+            let deleteCategoryStatement = try prepare(deleteCategorySQL)
+            defer { sqlite3_finalize(deleteCategoryStatement) }
+            bindUUID(deleteCategoryStatement, index: 1, value: id)
+            try step(deleteCategoryStatement)
+
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
     }
 
     public func fetchScoreProfiles() async throws -> [UUID: Core.ScoreProfile] {
@@ -323,6 +369,22 @@ public actor SQLiteDatabase: DBGateway {
     }
 
     public func deleteMealSlot(id: UUID) async throws {
+        let slotCount = try scalarCount("SELECT COUNT(*) FROM meal_slots;")
+        guard slotCount > 1 else {
+            throw SQLiteDatabaseError.executionFailed("At least one meal slot is required.")
+        }
+
+        let dailyEntryCount = try scalarCount(
+            "SELECT COUNT(*) FROM daily_entries WHERE meal_slot_id = ?;"
+        ) { statement in
+            self.bindUUID(statement, index: 1, value: id)
+        }
+        guard dailyEntryCount == 0 else {
+            throw SQLiteDatabaseError.executionFailed(
+                "Meal slot can't be deleted because it has logged entries."
+            )
+        }
+
         let sql = "DELETE FROM meal_slots WHERE id = ?;"
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -1185,6 +1247,20 @@ public actor SQLiteDatabase: DBGateway {
 
     private func execute(_ sql: String) throws {
         try Self.execute(sql, db: db)
+    }
+
+    private func scalarCount(
+        _ sql: String,
+        bind: ((OpaquePointer) -> Void)? = nil
+    ) throws -> Int {
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bind?(statement)
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            let message = String(cString: sqlite3_errmsg(db))
+            throw SQLiteDatabaseError.stepFailed(message)
+        }
+        return Int(sqlite3_column_int64(statement, 0))
     }
 
     private func prepare(_ sql: String) throws -> OpaquePointer {

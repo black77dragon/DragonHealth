@@ -40,6 +40,12 @@ struct ManageView: View {
                 }
 
                 NavigationLink {
+                    TodayViewSettingsView()
+                } label: {
+                    Label("Today View", systemImage: "sun.max")
+                }
+
+                NavigationLink {
                     CategoriesView()
                 } label: {
                     Label("Categories", systemImage: "square.grid.2x2")
@@ -121,6 +127,109 @@ struct ManageView: View {
             }
         }
         .navigationTitle("Manage")
+    }
+}
+
+private enum TodayCategoryDisplayStyleOption: String, CaseIterable, Identifiable {
+    case compactRings
+    case inlineLabel
+    case capsuleRows
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .compactRings: return "Rings (A)"
+        case .inlineLabel: return "Inline (B)"
+        case .capsuleRows: return "Capsules (C)"
+        }
+    }
+}
+
+private enum TodayMealDisplayStyleOption: String, CaseIterable, Identifiable {
+    case miniCards
+    case stackedStrips
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .miniCards: return "Cards (F)"
+        case .stackedStrips: return "Strips (G)"
+        }
+    }
+}
+
+private enum TodayQuickAddStyleOption: String, CaseIterable, Identifiable {
+    case standard
+    case categoryFirst
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .standard: return "Standard"
+        case .categoryFirst: return "Category-first (Alt)"
+        }
+    }
+}
+
+private struct TodayViewSettingsView: View {
+    @AppStorage("today.categoryDisplayStyle") private var categoryDisplayStyleRaw: String = TodayCategoryDisplayStyleOption.compactRings.rawValue
+    @AppStorage("today.mealDisplayStyle") private var mealDisplayStyleRaw: String = TodayMealDisplayStyleOption.miniCards.rawValue
+    @AppStorage("today.quickAddStyle") private var quickAddStyleRaw: String = TodayQuickAddStyleOption.standard.rawValue
+
+    private var categorySelection: Binding<TodayCategoryDisplayStyleOption> {
+        Binding(
+            get: { TodayCategoryDisplayStyleOption(rawValue: categoryDisplayStyleRaw) ?? .compactRings },
+            set: { categoryDisplayStyleRaw = $0.rawValue }
+        )
+    }
+
+    private var mealSelection: Binding<TodayMealDisplayStyleOption> {
+        Binding(
+            get: { TodayMealDisplayStyleOption(rawValue: mealDisplayStyleRaw) ?? .miniCards },
+            set: { mealDisplayStyleRaw = $0.rawValue }
+        )
+    }
+
+    private var quickAddStyleSelection: Binding<TodayQuickAddStyleOption> {
+        Binding(
+            get: { TodayQuickAddStyleOption(rawValue: quickAddStyleRaw) ?? .standard },
+            set: { quickAddStyleRaw = $0.rawValue }
+        )
+    }
+
+    var body: some View {
+        Form {
+            Section("Categories") {
+                Picker("Category style", selection: categorySelection) {
+                    ForEach(TodayCategoryDisplayStyleOption.allCases) { style in
+                        Text(style.label).tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Section("Meals") {
+                Picker("Meal style", selection: mealSelection) {
+                    ForEach(TodayMealDisplayStyleOption.allCases) { style in
+                        Text(style.label).tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Section("Quick Add") {
+                Picker("Flow", selection: quickAddStyleSelection) {
+                    ForEach(TodayQuickAddStyleOption.allCases) { style in
+                        Text(style.label).tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+        }
+        .navigationTitle("Today View")
     }
 }
 
@@ -874,7 +983,11 @@ struct RestoreBackupView: View {
                 restoreCandidate = nil
             }
         } message: { backup in
-            Text("Restore backup from \(formatted(backup.createdAt))? This will replace your current data.")
+            Text(
+                "Restore backup from \(formatted(backup.createdAt))? "
+                + "This replaces your current tracked database data (meals, body metrics, food library, settings). "
+                + "Documents, food photos, and profile photo files are not part of backup/restore."
+            )
         }
     }
 

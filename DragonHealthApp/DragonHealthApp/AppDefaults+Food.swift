@@ -381,85 +381,85 @@ extension AppDefaults {
         ),
         FoodSeed(
             name: "Oats (rolled oats)",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain. 1 portion = 1/2 cup dry."
         ),
         FoodSeed(
             name: "Whole wheat bread",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain bread. 1 portion = 1 slice."
         ),
         FoodSeed(
             name: "Rye bread",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain bread. 1 portion = 1 slice."
         ),
         FoodSeed(
             name: "Brown rice",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain. 1 portion = 1/2 cup cooked."
         ),
         FoodSeed(
             name: "Quinoa",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain. 1 portion = 1/2 cup cooked."
         ),
         FoodSeed(
             name: "Whole wheat pasta",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain pasta. 1 portion = 1/2 cup cooked."
         ),
         FoodSeed(
             name: "Potatoes",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Starchy vegetable. 1 portion = 1 medium potato."
         ),
         FoodSeed(
             name: "Sweet potatoes",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Starchy vegetable. 1 portion = 1 medium sweet potato."
         ),
         FoodSeed(
             name: "Couscous (whole wheat)",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain. 1 portion = 1/2 cup cooked."
         ),
         FoodSeed(
             name: "Bulgur",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain. 1 portion = 1/2 cup cooked."
         ),
         FoodSeed(
             name: "Barley",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain. 1 portion = 1/2 cup cooked."
         ),
         FoodSeed(
             name: "Buckwheat",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain. 1 portion = 1/2 cup cooked."
         ),
         FoodSeed(
             name: "Polenta",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Whole grain. 1 portion = 1/2 cup cooked."
         ),
         FoodSeed(
             name: "Sweet corn",
-            categoryName: "Starchy Sides",
+            categoryName: "Carb",
             portion: 1.0,
             notes: "Starchy vegetable. 1 portion = 1/2 cup kernels."
         ),
