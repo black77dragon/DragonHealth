@@ -353,18 +353,31 @@ struct FoodLibraryTransferView: View {
 
         let fallbackCategoryID = store.categories.first?.id ?? UUID()
         let categoryID = raw.categoryID.flatMap(UUID.init(uuidString:)) ?? fallbackCategoryID
+        let category = store.categories.first(where: { $0.id == categoryID })
+        let portionIncrement = DrinkRules.portionIncrement(for: category)
 
         let portionEquivalent: Double = {
             guard let value = raw.portionEquivalent, value.isFinite, value > 0 else { return 1.0 }
-            return Portion.roundToIncrement(value)
-        }()
-
-        let amountPerPortion: Double? = {
-            guard let value = raw.amountPerPortion, value.isFinite, value > 0 else { return nil }
-            return Portion.roundToIncrement(value)
+            return Portion.roundToIncrement(value, increment: portionIncrement)
         }()
 
         let unitID = raw.unitID.flatMap(UUID.init(uuidString:))
+        let amountPerPortion: Double? = {
+            guard let value = raw.amountPerPortion, value.isFinite, value > 0 else { return nil }
+            if let category, DrinkRules.isDrinkCategory(category) {
+                let symbol = unitID.flatMap { id in
+                    store.units.first(where: { $0.id == id })?.symbol
+                }?.lowercased()
+                if symbol == "ml" {
+                    return value.rounded()
+                }
+                if symbol == "l" {
+                    return Portion.roundToIncrement(value, increment: Portion.drinkIncrement)
+                }
+            }
+            return Portion.roundToIncrement(value)
+        }()
+
         let notes = normalizedText(raw.notes)
         let kind = Core.FoodItemKind(rawValue: raw.kind ?? "") ?? .single
         var components: [Core.FoodComponent] = []

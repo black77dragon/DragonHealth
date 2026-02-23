@@ -38,7 +38,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CoreTests",
-            dependencies: ["Core"],
+            dependencies: ["Core", "CoreDB"],
             path: "Tests/Unit"
         )
     ]

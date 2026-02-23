@@ -61,6 +61,11 @@ Each entry includes:
 - optional amount unit
 - optional notes
 
+Notes:
+- For Unsweetened Drinks, amount units are limited to ml or L.
+- If an amount is provided for Unsweetened Drinks, portion value is derived in liters
+  (1 L = 1000 ml) and stored as liters.
+
 ### Body Metrics
 
 Tracked per day:
@@ -83,6 +88,11 @@ Each food item includes:
 - optional notes
 - favorite flag
 - optional photo
+
+Notes:
+- For Unsweetened Drinks, amount units are limited to ml or L.
+- Portion equivalent for Unsweetened Drinks should be derived from amount per portion
+  (stored in liters).
 
 ### Care Team Meetings
 
@@ -135,7 +145,7 @@ Notes:
 
 ### Default Categories
 
-1. Unsweetened Drinks (L)
+1. Unsweetened Drinks (L, ml input allowed)
 2. Vegetables (portions)
 3. Fruit (portions)
 4. Starchy Sides (portions)
@@ -170,10 +180,17 @@ Exact targets allow +/- 0.1 tolerance.
 
 ## 6. Portion System
 
-- Core portion values are rounded to 0.1 increments.
-- Quick Add uses 0.1 increments (0.0 to 6.0).
-- Food library portions use 0.1 increments.
-- Amount inputs sync with portion values and round to 0.1.
+- Core portion values are rounded to 0.1 increments (all portion-based categories).
+- Unsweetened Drinks is volume-based: values are stored in liters with 0.01 precision.
+  Example: 250 ml -> 0.25 L.
+- Quick Add uses 0.1 increments (0.0 to 6.0) for portion-based categories.
+- Quick Add for Unsweetened Drinks supports ml and L input; L input uses 0.01 increments.
+- Food library portions use 0.1 increments (except Unsweetened Drinks, which is derived
+  from ml/L input).
+- Amount inputs sync with portion values:
+  - Unsweetened Drinks: convert ml/L to liters and round to 0.01 L.
+  - Other categories: round to 0.1.
+- Historical entries are not retro-converted; this change is forward-only.
 
 ## 7. Adherence Logic
 

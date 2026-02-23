@@ -685,7 +685,7 @@ public actor SQLiteDatabase: DBGateway {
                     date: date,
                     mealSlotID: mealSlotID,
                     categoryID: categoryID,
-                    portion: Portion(portion),
+                    portion: Portion(raw: portion),
                     amountValue: amountValue,
                     amountUnitID: amountUnitID,
                     notes: notes,

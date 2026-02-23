@@ -13,7 +13,7 @@ final class BodyTrendCalculatorTests: XCTestCase {
         }
 
         let averages = BodyTrendCalculator().sevenDayAverages(entries: entries, referenceDate: baseDate, calendar: calendar)
-
-        XCTAssertEqual(averages.weightKg, 73.0, accuracy: 0.01)
+        let averageWeight = try XCTUnwrap(averages.weightKg)
+        XCTAssertEqual(averageWeight, 73.0, accuracy: 0.01)
     }
 }

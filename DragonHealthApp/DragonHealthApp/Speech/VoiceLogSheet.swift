@@ -221,6 +221,28 @@ private struct VoiceDraftRow: View {
     let foodItems: [FoodItem]
     let units: [FoodUnit]
 
+    private var selectedCategory: Core.Category? {
+        guard let categoryID = item.categoryID else { return nil }
+        return categories.first(where: { $0.id == categoryID })
+    }
+
+    private var isDrinkCategory: Bool {
+        guard let selectedCategory else { return false }
+        return DrinkRules.isDrinkCategory(selectedCategory)
+    }
+
+    private var drinkUnits: [FoodUnit] {
+        DrinkRules.drinkUnits(from: units)
+    }
+
+    private var availableUnits: [FoodUnit] {
+        isDrinkCategory ? drinkUnits : units
+    }
+
+    private var portionIncrement: Double {
+        DrinkRules.portionIncrement(for: selectedCategory)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             TextField("Food", text: $item.foodText)
@@ -237,7 +259,7 @@ private struct VoiceDraftRow: View {
                       let food = foodItems.first(where: { $0.id == newValue }) else { return }
                 item.foodText = food.name
                 item.categoryID = food.categoryID
-                item.portion = Portion.roundToIncrement(food.portionEquivalent)
+                item.portion = Portion.roundToIncrement(food.portionEquivalent, increment: portionIncrement)
                 if let amountPerPortion = food.amountPerPortion, let unitID = food.unitID {
                     item.amountValue = amountPerPortion
                     item.amountUnitID = unitID
@@ -250,17 +272,29 @@ private struct VoiceDraftRow: View {
                     Text(category.name).tag(Optional(category.id))
                 }
             }
+            .onChange(of: item.categoryID) { _, _ in
+                guard isDrinkCategory else { return }
+                if let unitID = item.amountUnitID,
+                   let symbol = units.first(where: { $0.id == unitID })?.symbol,
+                   DrinkRules.isDrinkUnitSymbol(symbol) {
+                    return
+                }
+                item.amountUnitID = drinkUnits.first(where: { $0.symbol.lowercased() == "ml" })?.id ?? drinkUnits.first?.id
+            }
 
             HStack {
                 TextField("Amount", text: amountBinding)
                     .keyboardType(.decimalPad)
                 Picker("Unit", selection: $item.amountUnitID) {
                     Text("None").tag(UUID?.none)
-                    ForEach(units) { unit in
+                    ForEach(availableUnits) { unit in
                         Text(unit.symbol).tag(Optional(unit.id))
                     }
                 }
                 .pickerStyle(.menu)
+            }
+            .onChange(of: item.amountUnitID) { _, _ in
+                syncPortionFromAmount()
             }
 
             TextField("Portion", text: portionBinding)
@@ -280,7 +314,8 @@ private struct VoiceDraftRow: View {
             set: { newValue in
                 let normalized = newValue.replacingOccurrences(of: ",", with: ".")
                 if let value = Double(normalized) {
-                    item.amountValue = value
+                    item.amountValue = roundedAmountValue(value)
+                    syncPortionFromAmount()
                 } else {
                     item.amountValue = nil
                 }
@@ -294,12 +329,31 @@ private struct VoiceDraftRow: View {
             set: { newValue in
                 let normalized = newValue.replacingOccurrences(of: ",", with: ".")
                 if let value = Double(normalized) {
-                    item.portion = Portion.roundToIncrement(value)
+                    item.portion = Portion.roundToIncrement(value, increment: portionIncrement)
                 } else {
                     item.portion = nil
                 }
             }
         )
+    }
+
+    private func roundedAmountValue(_ value: Double) -> Double {
+        if isDrinkCategory {
+            let symbol = units.first(where: { $0.id == item.amountUnitID })?.symbol?.lowercased()
+            if symbol == "ml" {
+                return value.rounded()
+            }
+            return Portion.roundToIncrement(value, increment: Portion.drinkIncrement)
+        }
+        return Portion.roundToIncrement(value)
+    }
+
+    private func syncPortionFromAmount() {
+        guard isDrinkCategory else { return }
+        guard let amountValue = item.amountValue else { return }
+        let symbol = units.first(where: { $0.id == item.amountUnitID })?.symbol
+        guard let liters = DrinkRules.liters(from: amountValue, unitSymbol: symbol) else { return }
+        item.portion = Portion.roundToIncrement(liters, increment: Portion.drinkIncrement)
     }
 
     private var missingFields: [String] {

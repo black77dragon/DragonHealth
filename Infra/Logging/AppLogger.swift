@@ -11,6 +11,7 @@ public enum LogCategory: String {
     case health = "health"
 }
 
+@available(macOS 11.0, iOS 14.0, *)
 public struct AppLogger: Sendable {
     private let logger: Logger
 

@@ -81,6 +81,7 @@ VoiceDraftItem
   - exact or normalized match against `FoodItem.name`
   - fallback to fuzzy match (token overlap)
 - Portion calculation:
+  - For Unsweetened Drinks, if amount is provided, derive portion as liters (ml / 1000).
   - if `FoodItem.amountPerPortion` available, compute portion
   - if not, set warning and require user input
 

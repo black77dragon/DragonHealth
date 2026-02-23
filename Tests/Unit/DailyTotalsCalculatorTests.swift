@@ -13,7 +13,7 @@ final class DailyTotalsCalculatorTests: XCTestCase {
         ]
 
         let totals = DailyTotalsCalculator().totalsByCategory(entries: entries)
-
-        XCTAssertEqual(totals[categoryID], 1.5, accuracy: 0.001)
+        let total = try XCTUnwrap(totals[categoryID])
+        XCTAssertEqual(total, 1.5, accuracy: 0.001)
     }
 }

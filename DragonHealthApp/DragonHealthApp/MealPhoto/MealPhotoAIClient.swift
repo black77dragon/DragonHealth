@@ -167,7 +167,7 @@ struct OpenAIMealPhotoClient {
         - If a food is only a plausible guess, include it with a lower confidence instead of omitting it.
         - Do not duplicate the same food item multiple times.
         - Use `portionEstimate` in 0.1 steps between 0.1 and 6.0.
-        - If known, set `amountValue` and `amountUnit` using one of: g, ml, pc, portion.
+        - If known, set `amountValue` and `amountUnit` using one of: g, ml, l, pc, portion.
         - If unknown, set amount fields to null.
         - Set `confidence` between 0 and 1.
         - Prefer category hints from this list when possible: \(allowedCategories).
@@ -362,15 +362,16 @@ struct MealPhotoDraftBuilder {
             guard !normalizedFoodName.isEmpty else { return nil }
 
             let matchedFood = matchFood(normalizedFoodName, in: availableFoods)
+            let categoryID = matchedFood?.categoryID ?? matchCategoryID(for: detection.categoryHint ?? detection.foodName)
             let amountUnitID = resolveUnitID(for: detection.amountUnit)
-            let amountValue = sanitizedAmountValue(detection.amountValue)
+            let amountValue = sanitizedAmountValue(detection.amountValue, unit: detection.amountUnit)
             let portion = resolvedPortion(
                 for: detection,
                 matchedFood: matchedFood,
                 amountValue: amountValue,
-                amountUnitID: amountUnitID
+                amountUnitID: amountUnitID,
+                categoryID: categoryID
             )
-            let categoryID = matchedFood?.categoryID ?? matchCategoryID(for: detection.categoryHint ?? detection.foodName)
             let trimmedNotes = detection.notes?.trimmingCharacters(in: .whitespacesAndNewlines)
             let notes = trimmedNotes?.isEmpty == true ? nil : trimmedNotes
 
@@ -391,8 +392,23 @@ struct MealPhotoDraftBuilder {
         for detection: MealPhotoDetection,
         matchedFood: FoodItem?,
         amountValue: Double?,
-        amountUnitID: UUID?
+        amountUnitID: UUID?,
+        categoryID: UUID?
     ) -> Double? {
+        let category = categoryID.flatMap { id in
+            categories.first(where: { $0.id == id })
+        }
+        let isDrinkCategory = category.map(DrinkRules.isDrinkCategory) ?? false
+        let increment = DrinkRules.portionIncrement(for: category)
+
+        if isDrinkCategory,
+           let amountValue,
+           let liters = DrinkRules.liters(from: amountValue, unitID: amountUnitID, units: units) {
+            let rounded = Portion.roundToIncrement(liters, increment: Portion.drinkIncrement)
+            let clamped = clampPortion(rounded, minimum: Portion.drinkIncrement)
+            if clamped > 0 { return clamped }
+        }
+
         if let matchedFood,
            let amountValue,
            let amountPerPortion = matchedFood.amountPerPortion,
@@ -401,29 +417,38 @@ struct MealPhotoDraftBuilder {
            let amountUnitID,
            unitID == amountUnitID {
             let value = (amountValue / amountPerPortion) * matchedFood.portionEquivalent
-            let rounded = Portion.roundToIncrement(value)
-            let clamped = clampPortion(rounded)
+            let rounded = Portion.roundToIncrement(value, increment: increment)
+            let clamped = clampPortion(rounded, minimum: increment)
             if clamped > 0 { return clamped }
         }
 
-        let estimated = clampPortion(Portion.roundToIncrement(detection.portionEstimate))
+        let estimated = clampPortion(Portion.roundToIncrement(detection.portionEstimate, increment: increment), minimum: increment)
         if estimated > 0 { return estimated }
 
         if let matchedFood {
-            let fallback = clampPortion(Portion.roundToIncrement(matchedFood.portionEquivalent))
+            let fallback = clampPortion(Portion.roundToIncrement(matchedFood.portionEquivalent, increment: increment), minimum: increment)
             if fallback > 0 { return fallback }
         }
         return nil
     }
 
-    private func clampPortion(_ value: Double) -> Double {
+    private func clampPortion(_ value: Double, minimum: Double = 0.1) -> Double {
         guard value.isFinite else { return 0 }
-        return min(max(value, 0.1), 6.0)
+        let minValue = max(minimum, 0.0)
+        return min(max(value, minValue), 6.0)
     }
 
-    private func sanitizedAmountValue(_ value: Double?) -> Double? {
+    private func sanitizedAmountValue(_ value: Double?, unit: String?) -> Double? {
         guard let value, value.isFinite, value > 0 else { return nil }
-        return Portion.roundToIncrement(value)
+        let normalizedUnit = normalizeText(unit ?? "")
+        switch normalizedUnit {
+        case "ml", "milliliter", "milliliters", "millilitre", "millilitres":
+            return value.rounded()
+        case "l", "liter", "liters", "litre", "litres":
+            return Portion.roundToIncrement(value, increment: Portion.drinkIncrement)
+        default:
+            return Portion.roundToIncrement(value)
+        }
     }
 
     private func resolveUnitID(for rawUnit: String?) -> UUID? {
@@ -435,6 +460,8 @@ struct MealPhotoDraftBuilder {
             preferredSymbol = "g"
         case "ml", "milliliter", "milliliters", "millilitre", "millilitres":
             preferredSymbol = "ml"
+        case "l", "liter", "liters", "litre", "litres":
+            preferredSymbol = "l"
         case "pc", "piece", "pieces", "stuck", "stueck", "stk":
             preferredSymbol = "pc"
         default:

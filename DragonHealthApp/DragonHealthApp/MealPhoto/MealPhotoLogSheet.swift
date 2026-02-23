@@ -379,6 +379,19 @@ private struct MealPhotoDraftRow: View {
         guard let categoryID = item.categoryID else { return nil }
         return categories.first(where: { $0.id == categoryID })
     }
+    private var isDrinkCategory: Bool {
+        guard let selectedCategory else { return false }
+        return DrinkRules.isDrinkCategory(selectedCategory)
+    }
+    private var drinkUnits: [FoodUnit] {
+        DrinkRules.drinkUnits(from: units)
+    }
+    private var availableUnits: [FoodUnit] {
+        isDrinkCategory ? drinkUnits : units
+    }
+    private var portionIncrement: Double {
+        DrinkRules.portionIncrement(for: selectedCategory)
+    }
     private var selectedFoodItem: FoodItem? {
         guard let foodID = item.matchedFoodID else { return nil }
         return foodItems.first(where: { $0.id == foodID })
@@ -437,20 +450,23 @@ private struct MealPhotoDraftRow: View {
                       let food = foodItems.first(where: { $0.id == newValue }) else { return }
                 item.foodText = food.name
                 item.categoryID = food.categoryID
-                item.portion = Portion.roundToIncrement(food.portionEquivalent)
+                item.portion = Portion.roundToIncrement(food.portionEquivalent, increment: portionIncrement)
                 if let amountPerPortion = food.amountPerPortion, let unitID = food.unitID {
                     item.amountValue = amountPerPortion
                     item.amountUnitID = unitID
                 }
+                ensureDrinkUnitSelection()
             }
             .onChange(of: item.categoryID) { _, newCategoryID in
                 guard let selectedFoodID = item.matchedFoodID,
                       let selectedFood = foodItems.first(where: { $0.id == selectedFoodID }) else {
+                    ensureDrinkUnitSelection()
                     return
                 }
                 if selectedFood.categoryID != newCategoryID {
                     item.matchedFoodID = nil
                 }
+                ensureDrinkUnitSelection()
             }
 
             if item.matchedFoodID == nil {
@@ -463,11 +479,14 @@ private struct MealPhotoDraftRow: View {
                     .keyboardType(.decimalPad)
                 Picker("Unit", selection: $item.amountUnitID) {
                     Text("None").tag(UUID?.none)
-                    ForEach(units) { unit in
+                    ForEach(availableUnits) { unit in
                         Text(unit.symbol).tag(Optional(unit.id))
                     }
                 }
                 .pickerStyle(.menu)
+            }
+            .onChange(of: item.amountUnitID) { _, _ in
+                syncPortionFromAmount()
             }
 
             TextField("Portion", text: portionBinding)
@@ -514,7 +533,8 @@ private struct MealPhotoDraftRow: View {
             set: { newValue in
                 let normalized = newValue.replacingOccurrences(of: ",", with: ".")
                 if let value = Double(normalized), value > 0 {
-                    item.amountValue = Portion.roundToIncrement(value)
+                    item.amountValue = roundedAmountValue(value)
+                    syncPortionFromAmount()
                 } else {
                     item.amountValue = nil
                 }
@@ -528,12 +548,41 @@ private struct MealPhotoDraftRow: View {
             set: { newValue in
                 let normalized = newValue.replacingOccurrences(of: ",", with: ".")
                 if let value = Double(normalized), value > 0 {
-                    item.portion = Portion.roundToIncrement(value)
+                    item.portion = Portion.roundToIncrement(value, increment: portionIncrement)
                 } else {
                     item.portion = nil
                 }
             }
         )
+    }
+
+    private func roundedAmountValue(_ value: Double) -> Double {
+        if isDrinkCategory {
+            let symbol = units.first(where: { $0.id == item.amountUnitID })?.symbol?.lowercased()
+            if symbol == "ml" {
+                return value.rounded()
+            }
+            return Portion.roundToIncrement(value, increment: Portion.drinkIncrement)
+        }
+        return Portion.roundToIncrement(value)
+    }
+
+    private func ensureDrinkUnitSelection() {
+        guard isDrinkCategory else { return }
+        if let unitID = item.amountUnitID,
+           let symbol = units.first(where: { $0.id == unitID })?.symbol,
+           DrinkRules.isDrinkUnitSymbol(symbol) {
+            return
+        }
+        item.amountUnitID = drinkUnits.first(where: { $0.symbol.lowercased() == "ml" })?.id ?? drinkUnits.first?.id
+    }
+
+    private func syncPortionFromAmount() {
+        guard isDrinkCategory else { return }
+        guard let amountValue = item.amountValue else { return }
+        let symbol = units.first(where: { $0.id == item.amountUnitID })?.symbol
+        guard let liters = DrinkRules.liters(from: amountValue, unitSymbol: symbol) else { return }
+        item.portion = Portion.roundToIncrement(liters, increment: Portion.drinkIncrement)
     }
 
     private var missingFields: [String] {

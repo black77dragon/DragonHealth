@@ -339,6 +339,20 @@ private struct FoodEntrySheet: View {
     @State private var componentPickerContext: ComponentPickerContext?
     private let compactRowInsets = EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
 
+    private var selectedCategory: Core.Category? {
+        guard let categoryID else { return nil }
+        return categories.first(where: { $0.id == categoryID })
+    }
+
+    private var isDrinkCategory: Bool {
+        guard let selectedCategory else { return false }
+        return DrinkRules.isDrinkCategory(selectedCategory)
+    }
+
+    private var drinkUnits: [Core.FoodUnit] {
+        DrinkRules.drinkUnits(from: units)
+    }
+
     init(
         categories: [Core.Category],
         units: [Core.FoodUnit],
@@ -503,12 +517,23 @@ private struct FoodEntrySheet: View {
                             .labelsHidden()
                         }
                         .listRowInsets(compactRowInsets)
-                        LabeledContent("Portion") {
-                            Stepper(value: $portion, in: 0.1...6.0, step: 0.1) {
+                        if isDrinkCategory {
+                            LabeledContent("Portion") {
                                 Text(portion.cleanNumber)
                             }
+                            .listRowInsets(compactRowInsets)
+                            Text("Derived from amount (ml/L).")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .listRowInsets(compactRowInsets)
+                        } else {
+                            LabeledContent("Portion") {
+                                Stepper(value: $portion, in: 0.1...6.0, step: 0.1) {
+                                    Text(portion.cleanNumber)
+                                }
+                            }
+                            .listRowInsets(compactRowInsets)
                         }
-                        .listRowInsets(compactRowInsets)
                     }
                     LabeledContent("Favorite") {
                         Toggle("", isOn: $isFavorite)
@@ -556,6 +581,18 @@ private struct FoodEntrySheet: View {
                         }
                         let amountValue = isComposite ? nil : parsedAmount
                         let resolvedUnitID = isComposite || amountValue == nil ? nil : unitID
+                        let resolvedPortionEquivalent: Double
+                        if isComposite {
+                            resolvedPortionEquivalent = 1.0
+                        } else if isDrinkCategory,
+                                  let amountValue,
+                                  let unitSymbol = unitSymbol(for: resolvedUnitID),
+                                  let liters = DrinkRules.liters(from: amountValue, unitSymbol: unitSymbol) {
+                            resolvedPortionEquivalent = DrinkRules.roundedLiters(liters)
+                        } else {
+                            let increment = isDrinkCategory ? Portion.drinkIncrement : Portion.defaultIncrement
+                            resolvedPortionEquivalent = Portion.roundToIncrement(portion, increment: increment)
+                        }
                         let itemID = existingItem?.id ?? UUID()
                         var imagePath = removeExistingImage ? nil : existingImagePath
                         if let savedPath = saveImageIfNeeded(itemID: itemID) {
@@ -572,7 +609,7 @@ private struct FoodEntrySheet: View {
                                 id: itemID,
                                 name: name,
                                 categoryID: resolvedCategoryID,
-                                portionEquivalent: isComposite ? 1.0 : Portion.roundToIncrement(portion),
+                                portionEquivalent: resolvedPortionEquivalent,
                                 amountPerPortion: amountValue,
                                 unitID: resolvedUnitID,
                                 notes: notes.isEmpty ? nil : notes,
@@ -603,6 +640,8 @@ private struct FoodEntrySheet: View {
                 } else if parsedAmount == nil {
                     unitID = nil
                 }
+                ensureDrinkUnitSelection()
+                syncDrinkPortionFromAmount()
                 if selectedImage == nil {
                     photoSelectionKind = .none
                 }
@@ -621,6 +660,16 @@ private struct FoodEntrySheet: View {
                     categoryID = categories.first?.id
                 }
             }
+            .onChange(of: categoryID) { _, _ in
+                ensureDrinkUnitSelection()
+                syncDrinkPortionFromAmount()
+            }
+            .onChange(of: amountText) { _, _ in
+                syncDrinkPortionFromAmount()
+            }
+            .onChange(of: unitID) { _, _ in
+                syncDrinkPortionFromAmount()
+            }
             .task(id: selectedPhotoItem) {
                 await handleSelectedPhoto()
             }
@@ -629,7 +678,15 @@ private struct FoodEntrySheet: View {
     }
 
     private var availableUnits: [Core.FoodUnit] {
-        units.filter { $0.isEnabled || $0.id == unitID }
+        let base = units.filter { $0.isEnabled || $0.id == unitID }
+        guard isDrinkCategory else { return base }
+        var allowed = DrinkRules.drinkUnits(from: base)
+        if let unitID,
+           let existing = base.first(where: { $0.id == unitID }),
+           !allowed.contains(existing) {
+            allowed.append(existing)
+        }
+        return allowed
     }
 
     @ViewBuilder
@@ -784,10 +841,7 @@ private struct FoodEntrySheet: View {
         guard !trimmed.isEmpty else { return nil }
         let normalized = trimmed.replacingOccurrences(of: ",", with: ".")
         guard let value = Double(normalized), value > 0 else { return nil }
-        if unitAllowsDecimal {
-            return Portion.roundToIncrement(value)
-        }
-        return value.rounded()
+        return roundedAmountValue(value)
     }
 
     private var isAmountSelectionValid: Bool {
@@ -807,9 +861,41 @@ private struct FoodEntrySheet: View {
         return units.first(where: { $0.id == unitID })?.allowsDecimal ?? true
     }
 
+    private func roundedAmountValue(_ value: Double) -> Double {
+        if isDrinkCategory {
+            let symbol = unitSymbol(for: unitID)?.lowercased()
+            if symbol == "ml" {
+                return value.rounded()
+            }
+            return Portion.roundToIncrement(value, increment: Portion.drinkIncrement)
+        }
+        if unitAllowsDecimal {
+            return Portion.roundToIncrement(value)
+        }
+        return value.rounded()
+    }
+
     private func unitSymbol(for id: UUID?) -> String? {
         guard let id else { return nil }
         return units.first(where: { $0.id == id })?.symbol
+    }
+
+    private func ensureDrinkUnitSelection() {
+        guard isDrinkCategory else { return }
+        if let unitID,
+           let symbol = unitSymbol(for: unitID),
+           DrinkRules.isDrinkUnitSymbol(symbol) {
+            return
+        }
+        unitID = drinkUnits.first(where: { $0.symbol.lowercased() == "ml" })?.id ?? drinkUnits.first?.id
+    }
+
+    private func syncDrinkPortionFromAmount() {
+        guard isDrinkCategory else { return }
+        guard let amountValue = parsedAmount else { return }
+        let unitSymbol = unitSymbol(for: unitID)
+        guard let liters = DrinkRules.liters(from: amountValue, unitSymbol: unitSymbol) else { return }
+        portion = DrinkRules.roundedLiters(liters)
     }
 
     private func handleSelectedPhoto() async {

@@ -4,7 +4,7 @@ import Core
 struct VoiceDraftParser {
     func parse(
         transcript: String,
-        categories _: [Core.Category],
+        categories: [Core.Category],
         foodItems: [FoodItem],
         units: [FoodUnit],
         mealSlots: [MealSlot]
@@ -21,6 +21,12 @@ struct VoiceDraftParser {
             guard !parsed.foodText.isEmpty else { return nil }
             let normalizedFood = normalizeText(parsed.foodText)
             let matchedFood = matchFood(normalizedFood, foodIndex: foodIndex)
+            let categoryID = matchedFood?.categoryID
+            let category = categoryID.flatMap { id in
+                categories.first(where: { $0.id == id })
+            }
+            let isDrinkCategory = category.map(DrinkRules.isDrinkCategory) ?? false
+            let portionIncrement = DrinkRules.portionIncrement(for: category)
 
             var portion: Double? = nil
             let isPortionUnit = isPortionToken(parsed.unitToken)
@@ -38,17 +44,23 @@ struct VoiceDraftParser {
             var didDefaultToPortion = false
 
             if isPortionUnit, let amount = parsed.amount {
-                portion = Portion.roundToIncrement(amount)
+                portion = Portion.roundToIncrement(amount, increment: portionIncrement)
+            } else if isDrinkCategory,
+                      let convertedAmount,
+                      let liters = DrinkRules.liters(from: convertedAmount, unitID: amountUnitID, units: units) {
+                portion = Portion.roundToIncrement(liters, increment: Portion.drinkIncrement)
             } else {
                 if let matchedFood {
                     portion = calculatePortion(
                         for: matchedFood,
                         amountValue: convertedAmount,
-                        amountUnitID: amountUnitID
+                        amountUnitID: amountUnitID,
+                        increment: portionIncrement
                     )
                 }
 
-                if portion == nil, let countPortion = countBasedPortion(for: normalizedFood, amount: parsed.amount) {
+                if portion == nil,
+                   let countPortion = countBasedPortion(for: normalizedFood, amount: parsed.amount, increment: portionIncrement) {
                     portion = countPortion
                     if amountUnitID == nil {
                         amountUnitID = unitMap["pc"]
@@ -56,7 +68,7 @@ struct VoiceDraftParser {
                 }
 
                 if portion == nil, shouldDefaultToPortion, let amount = parsed.amount {
-                    portion = Portion.roundToIncrement(amount)
+                    portion = Portion.roundToIncrement(amount, increment: portionIncrement)
                     didDefaultToPortion = true
                 }
             }
@@ -65,8 +77,6 @@ struct VoiceDraftParser {
                 convertedAmount = nil
                 amountUnitID = nil
             }
-
-            let categoryID = matchedFood?.categoryID
 
             return VoiceDraftItem(
                 foodText: parsed.foodText,
@@ -363,15 +373,20 @@ struct VoiceDraftParser {
         }
     }
 
-    private func calculatePortion(for food: FoodItem, amountValue: Double?, amountUnitID: UUID?) -> Double? {
+    private func calculatePortion(
+        for food: FoodItem,
+        amountValue: Double?,
+        amountUnitID: UUID?,
+        increment: Double
+    ) -> Double? {
         guard let amountValue else { return nil }
         guard let amountPerPortion = food.amountPerPortion else { return nil }
         guard let unitID = food.unitID, unitID == amountUnitID else { return nil }
         let portionValue = (amountValue / amountPerPortion) * food.portionEquivalent
-        return Portion.roundToIncrement(portionValue)
+        return Portion.roundToIncrement(portionValue, increment: increment)
     }
 
-    private func countBasedPortion(for normalizedFood: String, amount: Double?) -> Double? {
+    private func countBasedPortion(for normalizedFood: String, amount: Double?, increment: Double) -> Double? {
         guard let amount else { return nil }
         let countPerPortion: [String: Double] = [
             "eggs": 2.0,
@@ -380,6 +395,6 @@ struct VoiceDraftParser {
             "eier": 2.0
         ]
         guard let perPortion = countPerPortion[normalizedFood] else { return nil }
-        return Portion.roundToIncrement(amount / perPortion)
+        return Portion.roundToIncrement(amount / perPortion, increment: increment)
     }
 }

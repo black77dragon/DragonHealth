@@ -171,6 +171,15 @@ final class AppStore: ObservableObject {
                     try await db.upsertUnit(unit)
                 }
                 loadedUnits = try await db.fetchUnits()
+            } else {
+                let existingSymbols = Set(loadedUnits.map { $0.symbol.lowercased() })
+                let missingUnits = AppDefaults.units.filter { !existingSymbols.contains($0.symbol.lowercased()) }
+                if !missingUnits.isEmpty {
+                    for unit in missingUnits {
+                        try await db.upsertUnit(unit)
+                    }
+                    loadedUnits = try await db.fetchUnits()
+                }
             }
 
             var loadedSettings = try await db.fetchSettings()
@@ -556,12 +565,18 @@ final class AppStore: ObservableObject {
         let day = normalizedDay(for: entry.date, treatStartOfDayAsDayOnly: true)
         guard var log = await fetchDailyLogForDay(day) else { return }
         guard let index = log.entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        let resolvedPortion = resolvedPortionForLogging(
+            categoryID: categoryID,
+            portion: portion,
+            amountValue: amountValue,
+            amountUnitID: amountUnitID
+        )
         log.entries[index] = Core.DailyLogEntry(
             id: entry.id,
             date: day,
             mealSlotID: mealSlotID,
             categoryID: categoryID,
-            portion: portion,
+            portion: resolvedPortion,
             amountValue: amountValue,
             amountUnitID: amountUnitID,
             notes: normalizedNotes(notes),
@@ -595,12 +610,18 @@ final class AppStore: ObservableObject {
     ) async {
         let day = normalizedDay(for: date)
         var log = await fetchDailyLogForDay(day) ?? Core.DailyLog(date: day, entries: [])
+        let resolvedPortion = resolvedPortionForLogging(
+            categoryID: categoryID,
+            portion: portion,
+            amountValue: amountValue,
+            amountUnitID: amountUnitID
+        )
         log.entries.append(
             Core.DailyLogEntry(
                 date: day,
                 mealSlotID: mealSlotID,
                 categoryID: categoryID,
-                portion: portion,
+                portion: resolvedPortion,
                 amountValue: amountValue,
                 amountUnitID: amountUnitID,
                 notes: normalizedNotes(notes),
@@ -649,6 +670,34 @@ final class AppStore: ObservableObject {
             notes: notes,
             foodItemID: foodItemID
         )
+    }
+
+    private func resolvedPortionForLogging(
+        categoryID: UUID,
+        portion: Core.Portion,
+        amountValue: Double?,
+        amountUnitID: UUID?
+    ) -> Core.Portion {
+        guard let category = categories.first(where: { $0.id == categoryID }),
+              DrinkRules.isDrinkCategory(category),
+              let amountValue,
+              amountValue.isFinite,
+              amountValue >= 0 else {
+            return portion
+        }
+
+        let liters = DrinkRules.liters(from: amountValue, unitID: amountUnitID, units: units)
+        let resolvedLiters: Double
+        if let liters {
+            resolvedLiters = liters
+        } else if amountUnitID == nil {
+            resolvedLiters = amountValue
+        } else {
+            return portion
+        }
+
+        let rounded = DrinkRules.roundedLiters(resolvedLiters)
+        return Core.Portion(rounded, increment: Portion.drinkIncrement)
     }
 
     private func logCompositeFood(
@@ -826,7 +875,8 @@ enum AppDefaults {
     static let units: [Core.FoodUnit] = [
         Core.FoodUnit(name: "Gram", symbol: "g", allowsDecimal: true, isEnabled: true, sortOrder: 0),
         Core.FoodUnit(name: "Milliliter", symbol: "ml", allowsDecimal: true, isEnabled: true, sortOrder: 1),
-        Core.FoodUnit(name: "Piece", symbol: "pc", allowsDecimal: false, isEnabled: true, sortOrder: 2)
+        Core.FoodUnit(name: "Liter", symbol: "L", allowsDecimal: true, isEnabled: true, sortOrder: 2),
+        Core.FoodUnit(name: "Piece", symbol: "pc", allowsDecimal: false, isEnabled: true, sortOrder: 3)
     ]
 
     static let categories: [Core.Category] = [
