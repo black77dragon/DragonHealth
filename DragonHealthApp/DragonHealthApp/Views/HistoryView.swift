@@ -4,6 +4,22 @@ import Core
 import Charts
 #endif
 
+private enum HistorySurface: String, CaseIterable, Identifiable {
+    case review
+    case trends
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .review:
+            return "Review"
+        case .trends:
+            return "Trends"
+        }
+    }
+}
+
 struct HistoryView: View {
     @EnvironmentObject private var store: AppStore
     @State private var selectedDate = Date()
@@ -19,6 +35,7 @@ struct HistoryView: View {
     @State private var editingEntry: DailyLogEntry?
     @AppStorage("history.scoreTimeFrame") private var scoreTimeFrameRaw: String = HistoryScoreTimeFrame.month.rawValue
     @AppStorage(NightGuardTracking.recordsStorageKey) private var nightGuardRecordsJSON: String = ""
+    @AppStorage("history.selectedSurface") private var selectedSurfaceRaw: String = HistorySurface.review.rawValue
 
     private let totalsCalculator = DailyTotalsCalculator()
     private let evaluator = DailyTotalEvaluator()
@@ -33,6 +50,10 @@ struct HistoryView: View {
             get: { HistoryScoreTimeFrame(rawValue: scoreTimeFrameRaw) ?? .month },
             set: { scoreTimeFrameRaw = $0.rawValue }
         )
+    }
+
+    private var selectedSurface: HistorySurface {
+        HistorySurface(rawValue: selectedSurfaceRaw) ?? .review
     }
 
     private var nightGuardStatusesByDayKey: [String: NightGuardStatus] {
@@ -62,63 +83,72 @@ struct HistoryView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 20) {
                 let entries = dailyLog?.entries ?? []
 
-                HistoryCalendarView(
-                    calendar: store.appCalendar,
-                    currentDay: store.currentDay,
-                    selectedDate: $selectedDate,
-                    indicators: calendarIndicators,
-                    nightGuardStatusesByDayKey: nightGuardStatusesByDayKey,
-                    onVisibleMonthChanged: { newMonthDate in
-                        let calendar = store.appCalendar
-                        let newComponents = calendar.dateComponents([.year, .month], from: newMonthDate)
-                        let currentComponents = calendar.dateComponents([.year, .month], from: visibleMonthDate)
-                        guard newComponents != currentComponents else { return }
-                        visibleMonthDate = newMonthDate
-                    }
-                )
-                HistoryDailyScoreCard(
-                    date: selectedDate,
+                HistorySurfaceHeader(
+                    selectedSurface: Binding(
+                        get: { selectedSurface },
+                        set: { selectedSurfaceRaw = $0.rawValue }
+                    ),
+                    selectedDate: selectedDate,
                     adherence: adherence,
                     scoreSummary: scoreSummary
                 )
-                HistoryCalendarLegend()
-                HistoryScoreHistorySection(
-                    timeFrame: scoreTimeFrameBinding,
-                    points: scoreHistoryPoints
-                )
-                HistoryNightGuardHistorySection(points: nightGuardHistoryPoints)
-                if let weeklyReflection {
-                    HistoryWeeklyReflectionCard(reflection: weeklyReflection)
-                }
 
-                if !entries.isEmpty {
-                    HistoryEntriesView(
-                        mealSlots: store.mealSlots,
-                        entries: entries,
-                        categories: store.categories,
-                        onEdit: { entry in editingEntry = entry },
-                        onDelete: { entry in
-                            Task {
-                                await store.deleteEntry(entry)
-                                await loadSelectedDay()
-                            }
+                switch selectedSurface {
+                case .review:
+                    HistoryCalendarView(
+                        calendar: store.appCalendar,
+                        currentDay: store.currentDay,
+                        selectedDate: $selectedDate,
+                        indicators: calendarIndicators,
+                        nightGuardStatusesByDayKey: nightGuardStatusesByDayKey,
+                        onVisibleMonthChanged: { newMonthDate in
+                            let calendar = store.appCalendar
+                            let newComponents = calendar.dateComponents([.year, .month], from: newMonthDate)
+                            let currentComponents = calendar.dateComponents([.year, .month], from: visibleMonthDate)
+                            guard newComponents != currentComponents else { return }
+                            visibleMonthDate = newMonthDate
                         }
                     )
-                } else {
-                    Text("No entries for this day.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
 
-                ForEach(store.categories.filter { $0.isEnabled }) { category in
-                    HistoryCategoryRow(
-                        category: category,
-                        total: totals[category.id] ?? 0,
-                        targetMet: adherence?.categoryResults.first(where: { $0.categoryID == category.id })?.targetMet ?? false
+                    if !entries.isEmpty {
+                        HistoryEntriesView(
+                            mealSlots: store.mealSlots,
+                            entries: entries,
+                            categories: store.categories,
+                            onEdit: { entry in editingEntry = entry },
+                            onDelete: { entry in
+                                Task {
+                                    await store.deleteEntry(entry)
+                                    await loadSelectedDay()
+                                }
+                            }
+                        )
+                    } else {
+                        Text("No entries for this day.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(store.categories.filter { $0.isEnabled }) { category in
+                        HistoryCategoryRow(
+                            category: category,
+                            total: totals[category.id] ?? 0,
+                            targetMet: adherence?.categoryResults.first(where: { $0.categoryID == category.id })?.targetMet ?? false
+                        )
+                    }
+                case .trends:
+                    HistoryCalendarLegend()
+                    HistoryScoreHistorySection(
+                        timeFrame: scoreTimeFrameBinding,
+                        points: scoreHistoryPoints
                     )
+                    HistoryNightGuardHistorySection(points: nightGuardHistoryPoints)
+                    if let weeklyReflection {
+                        HistoryWeeklyReflectionCard(reflection: weeklyReflection)
+                    }
                 }
             }
             .padding(20)
@@ -335,6 +365,63 @@ struct HistoryView: View {
             frictions: frictions,
             adjustment: adjustment,
             scoreDelta: scoreDelta
+        )
+    }
+}
+
+private struct HistorySurfaceHeader: View {
+    @Binding var selectedSurface: HistorySurface
+    let selectedDate: Date
+    let adherence: DailyAdherenceSummary?
+    let scoreSummary: DailyScoreSummary?
+
+    private var statusText: String {
+        guard let adherence else { return "No review yet for this date." }
+        if adherence.allTargetsMet {
+            return "All active targets were met on this day."
+        }
+        return "\(adherence.categoryResults.filter(\.targetMet).count) of \(adherence.categoryResults.count) targets were met."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("History")
+                    .font(.headline)
+                Text(selectedDate, style: .date)
+                    .font(.title3.weight(.semibold))
+                Text(statusText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Daily score")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let scoreSummary {
+                        ScoreBadge(score: scoreSummary.overallScore)
+                    } else {
+                        Text("--")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Picker("History Mode", selection: $selectedSurface) {
+                    ForEach(HistorySurface.allCases) { surface in
+                        Text(surface.title).tag(surface)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 220)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
         )
     }
 }
