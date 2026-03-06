@@ -3,7 +3,6 @@ import Core
 import InfraConfig
 import InfraFeatureFlags
 import InfraLogging
-
 struct ContentView: View {
     let config: AppConfig
     let featureFlags: FeatureFlagService
@@ -141,6 +140,9 @@ private extension Core.AppFontSize {
 
 private struct LaunchSplashView: View {
     let onDismiss: () -> Void
+    @AppStorage("launchSplash.lastNightGuardReminderIndex") private var lastReminderIndex = -1
+    @State private var reminder = LaunchSplashReminder.defaultReminder
+    @State private var hasDismissed = false
 
     var body: some View {
         ZStack {
@@ -193,17 +195,26 @@ private struct LaunchSplashView: View {
 
                 Spacer(minLength: 16)
 
-                Text("\"True serenity comes from within, not from what surrounds you.\"")
-                    .font(.system(.title3, design: .serif))
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                VStack(spacing: 10) {
+                    Text("Night Guard Reminder")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                        .tracking(1.2)
+
+                    Text(reminder.text)
+                        .font(.system(.title3, design: .serif))
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 20)
+                }
 
                 Spacer(minLength: 12)
 
                 VStack(spacing: 12) {
                     Button("OK") {
-                        onDismiss()
+                        dismiss()
                     }
                     .glassButton(.text)
                     .controlSize(.large)
@@ -218,7 +229,16 @@ private struct LaunchSplashView: View {
             .padding(.vertical, 32)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("DragonHealth by Rene W. Keller. Black Dragon Software Inc. \(appVersionText)")
+        .accessibilityLabel("DragonHealth by Rene W. Keller. Black Dragon Software Inc. Night Guard reminder. \(reminder.text). \(appVersionText)")
+        .onAppear {
+            let selection = LaunchSplashReminder.pick(excluding: lastReminderIndex)
+            reminder = selection.reminder
+            lastReminderIndex = selection.index
+        }
+        .task {
+            try? await Task.sleep(for: .seconds(3))
+            dismiss()
+        }
     }
 
     private var appVersionText: String {
@@ -235,6 +255,76 @@ private struct LaunchSplashView: View {
         default:
             return "Version unavailable"
         }
+    }
+
+    private func dismiss() {
+        guard !hasDismissed else { return }
+        hasDismissed = true
+        onDismiss()
+    }
+}
+
+private struct LaunchSplashReminder {
+    let text: String
+
+    private static let reminders: [LaunchSplashReminder] = [
+        .init(text: "Night Guard matters. Midnight snacks are just breakfast wearing a fake mustache."),
+        .init(text: "Protect the evening. Your fridge is not a therapist with interior lighting."),
+        .init(text: "Night Guard is important. The kitchen closes earlier than your excuses do."),
+        .init(text: "Respect Night Guard. Future-you enjoys sleeping more than negotiating with cookies."),
+        .init(text: "A strong night routine beats a heroic morning apology to the scale."),
+        .init(text: "Night Guard matters because peanut butter at 11 p.m. is rarely a strategic decision."),
+        .init(text: "Be the adult in the room, especially when the room contains cereal."),
+        .init(text: "The fork has no emergency powers after kitchen close."),
+        .init(text: "Night Guard is your bouncer. If nachos show up late, they do not get in."),
+        .init(text: "Your body likes consistency. Your snack drawer likes chaos. Pick a side."),
+        .init(text: "Discipline at night is cheaper than regret in the morning."),
+        .init(text: "If the craving has a dramatic monologue, give it water and no microphone."),
+        .init(text: "Night Guard matters. Hunger whispers; boredom usually arrives in sweatpants."),
+        .init(text: "Close the kitchen like a professional, not like a reality show cliffhanger."),
+        .init(text: "A late snack promises comfort and delivers paperwork."),
+        .init(text: "Tonight's victory is often one boring, brilliant decision repeated on purpose."),
+        .init(text: "Night Guard: because willpower is easier before the first 'just one bite.'"),
+        .init(text: "You do not need a snack sequel. The first dinner already had an ending."),
+        .init(text: "Evening cravings are persuasive, but they do not have voting rights."),
+        .init(text: "Guard the night. The pantry is innocent until proven delicious."),
+        .init(text: "A closed kitchen is a love letter to tomorrow morning."),
+        .init(text: "Night Guard is important. Sleep works best when digestion is not hosting a festival."),
+        .init(text: "If it is late and shiny-wrapped, it is probably not your wisest advisor."),
+        .init(text: "Be calm, be sharp, be slightly suspicious of late-night trail mix."),
+        .init(text: "The mission is simple: brush teeth, drink water, retire undefeated."),
+        .init(text: "Night Guard wins quietly. The snack attack arrives with a full marketing department."),
+        .init(text: "Your goals deserve a bedtime, not a loophole."),
+        .init(text: "Kitchen closed. The chef has gone home and took your rationalizations with him."),
+        .init(text: "A smart evening beats a perfect Monday that never starts."),
+        .init(text: "Night Guard matters. Mozzarella after dark is still a plot twist."),
+        .init(text: "The refrigerator light is not divine guidance."),
+        .init(text: "Make tonight boring in the most elite, high-performing way possible."),
+        .init(text: "Late-night snacking is cardio for your regrets."),
+        .init(text: "You are not missing out. Yogurt will still be there with normal business hours."),
+        .init(text: "Night Guard is important. The spoon is not a licensed negotiator."),
+        .init(text: "Treat the evening like a runway: close strong and land clean."),
+        .init(text: "Small nightly wins build a body that does not need motivational speeches from muffins."),
+        .init(text: "If you need drama tonight, make it a herbal tea with steam."),
+        .init(text: "Hold the line. Cravings are temporary; dishwasher decisions are forever."),
+        .init(text: "Night Guard protects progress from the charming nonsense of 10:47 p.m.")
+    ]
+
+    static var defaultReminder: LaunchSplashReminder {
+        reminders.first ?? .init(text: "Night Guard is important.")
+    }
+
+    static func pick(excluding excludedIndex: Int?) -> (index: Int, reminder: LaunchSplashReminder) {
+        guard !reminders.isEmpty else {
+            return (0, .init(text: "Night Guard is important."))
+        }
+
+        let candidates = reminders.indices.filter { index in
+            guard let excludedIndex else { return true }
+            return reminders.count == 1 || index != excludedIndex
+        }
+        let chosenIndex = candidates.randomElement() ?? 0
+        return (chosenIndex, reminders[chosenIndex])
     }
 }
 
