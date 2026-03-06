@@ -9,40 +9,63 @@ struct LibraryView: View {
     @State private var showingAddTypePicker = false
     @State private var addKind: FoodItemKind = .single
     @State private var editingItem: FoodItem?
+    @State private var itemPendingDelete: FoodItem?
     @State private var searchText = ""
+    @State private var selectedCategoryID: UUID?
+    @AppStorage("library.surface") private var surfaceRaw: String = LibrarySurface.browse.rawValue
+
+    private var selectedSurface: LibrarySurface {
+        LibrarySurface(rawValue: surfaceRaw) ?? .browse
+    }
+
+    private var selectedSurfaceBinding: Binding<LibrarySurface> {
+        Binding(
+            get: { LibrarySurface(rawValue: surfaceRaw) ?? .browse },
+            set: { surfaceRaw = $0.rawValue }
+        )
+    }
 
     var body: some View {
         List {
-            if !filteredFavorites.isEmpty {
-                Section("Favorites") {
-                    ForEach(filteredFavorites) { item in
-                        foodRow(for: item)
-                    }
-                    .onDelete { indices in
-                        delete(indices, filter: { $0.isFavorite })
-                    }
-                }
+            Section {
+                LibraryHeroCard(
+                    selectedSurface: selectedSurfaceBinding,
+                    totalCount: store.foodItems.count,
+                    favoriteCount: store.foodItems.filter(\.isFavorite).count,
+                    compositeCount: store.foodItems.filter { $0.kind.isComposite }.count
+                )
+                .listRowBackground(Color.clear)
             }
 
-            Section("All Foods") {
-                if store.foodItems.isEmpty {
-                    Text("No foods yet. Add items to build your library.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else if filteredAllFoods.isEmpty {
-                    Text("No foods match your search.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(filteredAllFoods) { item in
-                        foodRow(for: item)
-                    }
-                    .onDelete { indices in
-                        delete(indices, filter: { _ in true })
+            Section {
+                LibraryCategoryFilterBar(
+                    categories: store.categories,
+                    selectedCategoryID: $selectedCategoryID
+                )
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+            }
+
+            if contentSections.isEmpty {
+                Section {
+                    LibraryEmptyStateCard(
+                        title: emptyStateTitle,
+                        message: emptyStateMessage
+                    )
+                    .listRowBackground(Color.clear)
+                }
+            } else {
+                ForEach(contentSections) { section in
+                    Section(section.title) {
+                        ForEach(section.items) { item in
+                            foodRow(for: item)
+                        }
                     }
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Library")
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always))
         .toolbar {
@@ -90,6 +113,29 @@ struct LibraryView: View {
         } message: {
             Text("Choose what to add.")
         }
+        .confirmationDialog(
+            "Delete Item?",
+            isPresented: Binding(
+                get: { itemPendingDelete != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        itemPendingDelete = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible,
+            presenting: itemPendingDelete
+        ) { item in
+            Button("Delete \(item.name)", role: .destructive) {
+                Task { await store.deleteFoodItem(item) }
+                itemPendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                itemPendingDelete = nil
+            }
+        } message: { item in
+            Text("This removes \(item.name) from your library.")
+        }
     }
 
     private func categoryName(for id: UUID) -> String {
@@ -102,11 +148,61 @@ struct LibraryView: View {
     }
 
     private var filteredFavorites: [FoodItem] {
-        store.foodItems.filter { $0.isFavorite }.filter(matchesSearch)
+        filteredItems.filter(\.isFavorite)
     }
 
-    private var filteredAllFoods: [FoodItem] {
-        store.foodItems.filter(matchesSearch)
+    private var filteredItems: [FoodItem] {
+        store.foodItems
+            .filter(matchesCategory)
+            .filter(matchesSearch)
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var contentSections: [LibrarySection] {
+        switch selectedSurface {
+        case .browse:
+            let grouped = Dictionary(grouping: filteredItems) { item in
+                categoryName(for: item.categoryID)
+            }
+            return grouped.keys.sorted().compactMap { category in
+                guard let items = grouped[category], !items.isEmpty else { return nil }
+                return LibrarySection(title: category, items: items)
+            }
+        case .favorites:
+            return filteredFavorites.isEmpty ? [] : [LibrarySection(title: "Favorites", items: filteredFavorites)]
+        case .recipes:
+            let composites = filteredItems.filter { $0.kind.isComposite }
+            return composites.isEmpty ? [] : [LibrarySection(title: "Composite foods", items: composites)]
+        }
+    }
+
+    private var emptyStateTitle: String {
+        switch selectedSurface {
+        case .browse:
+            return store.foodItems.isEmpty ? "No foods yet" : "No foods match this view"
+        case .favorites:
+            return "No favorites yet"
+        case .recipes:
+            return "No composite foods yet"
+        }
+    }
+
+    private var emptyStateMessage: String {
+        switch selectedSurface {
+        case .browse:
+            return store.foodItems.isEmpty
+                ? "Add foods or recipes to start building your library."
+                : "Try a different search term or clear the category filter."
+        case .favorites:
+            return "Star the foods you use most so they are easier to find from quick add."
+        case .recipes:
+            return "Create composite foods for meals you repeat often."
+        }
+    }
+
+    private func matchesCategory(_ item: FoodItem) -> Bool {
+        guard let selectedCategoryID else { return true }
+        return item.categoryID == selectedCategoryID
     }
 
     private func matchesSearch(_ item: FoodItem) -> Bool {
@@ -117,15 +213,6 @@ struct LibraryView: View {
         return item.name.localizedStandardContains(term)
             || category.localizedStandardContains(term)
             || notes.localizedStandardContains(term)
-    }
-
-    private func delete(_ indices: IndexSet, filter: (FoodItem) -> Bool) {
-        let items = store.foodItems.filter(filter)
-        for index in indices {
-            guard index < items.count else { continue }
-            let item = items[index]
-            Task { await store.deleteFoodItem(item) }
-        }
     }
 
     @ViewBuilder
@@ -144,6 +231,156 @@ struct LibraryView: View {
                 }
                 .tint(.blue)
             }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    itemPendingDelete = item
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+    }
+}
+
+private enum LibrarySurface: String, CaseIterable, Identifiable {
+    case browse
+    case favorites
+    case recipes
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .browse: return "Browse"
+        case .favorites: return "Favorites"
+        case .recipes: return "Recipes"
+        }
+    }
+}
+
+private struct LibrarySection: Identifiable {
+    let title: String
+    let items: [FoodItem]
+
+    var id: String { title }
+}
+
+private struct LibraryHeroCard: View {
+    @Binding var selectedSurface: LibrarySurface
+    let totalCount: Int
+    let favoriteCount: Int
+    let compositeCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Food library")
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                Text("Browse by purpose instead of scanning one long list.")
+                    .font(.title3.weight(.semibold))
+                HStack(spacing: 12) {
+                    LibraryHeroMetric(label: "Foods", value: "\(totalCount)")
+                    LibraryHeroMetric(label: "Favorites", value: "\(favoriteCount)")
+                    LibraryHeroMetric(label: "Recipes", value: "\(compositeCount)")
+                }
+            }
+
+            Picker("Library Surface", selection: $selectedSurface) {
+                ForEach(LibrarySurface.allCases) { surface in
+                    Text(surface.label).tag(surface)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.orange.opacity(0.15), Color.green.opacity(0.10), Color(.secondarySystemBackground)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+}
+
+private struct LibraryHeroMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.headline.monospacedDigit())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.thinMaterial)
+        )
+    }
+}
+
+private struct LibraryCategoryFilterBar: View {
+    let categories: [Core.Category]
+    @Binding var selectedCategoryID: UUID?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                categoryButton(title: "All", categoryID: nil)
+                ForEach(categories) { category in
+                    categoryButton(title: category.name, categoryID: category.id)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func categoryButton(title: String, categoryID: UUID?) -> some View {
+        let isSelected = selectedCategoryID == categoryID
+        return Button {
+            selectedCategoryID = categoryID
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(isSelected ? Color.accentColor.opacity(0.18) : Color(.secondarySystemBackground))
+                )
+                .foregroundStyle(isSelected ? Color.accentColor : .primary)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct LibraryEmptyStateCard: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
     }
 }
 

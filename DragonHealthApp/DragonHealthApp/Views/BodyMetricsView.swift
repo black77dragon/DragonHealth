@@ -8,12 +8,36 @@ struct BodyMetricsView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var healthSyncManager: HealthSyncManager
     @State private var showingAdd = false
+    @AppStorage("bodyMetrics.surface") private var selectedSurfaceRaw: String = BodyMetricsSurface.overview.rawValue
     @AppStorage("bodyMetrics.timeFrame") private var timeFrameRaw: String = BodyMetricsTimeFrame.month.rawValue
 
     private let calculator = BodyTrendCalculator()
 
+    private var selectedSurface: BodyMetricsSurface {
+        BodyMetricsSurface(rawValue: selectedSurfaceRaw) ?? .overview
+    }
+
+    private var sortedEntries: [BodyMetricEntry] {
+        store.bodyMetrics.sorted(by: { $0.date > $1.date })
+    }
+
+    private var chronologicalEntries: [BodyMetricEntry] {
+        sortedEntries.reversed()
+    }
+
+    private var latestEntry: BodyMetricEntry? {
+        sortedEntries.first
+    }
+
     private var timeFrame: BodyMetricsTimeFrame {
         BodyMetricsTimeFrame(rawValue: timeFrameRaw) ?? .month
+    }
+
+    private var selectedSurfaceBinding: Binding<BodyMetricsSurface> {
+        Binding(
+            get: { BodyMetricsSurface(rawValue: selectedSurfaceRaw) ?? .overview },
+            set: { selectedSurfaceRaw = $0.rawValue }
+        )
     }
 
     private var timeFrameBinding: Binding<BodyMetricsTimeFrame> {
@@ -27,7 +51,7 @@ struct BodyMetricsView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 let averages = calculator.sevenDayAverages(entries: store.bodyMetrics, referenceDate: store.currentDay)
-                let sortedEntries = store.bodyMetrics.sorted(by: { $0.date < $1.date })
+                let sortedEntries = chronologicalEntries
                 let weightValues = metricValues(entries: sortedEntries, value: \.weightKg)
                 let latestWeight = weightValues.last
                 let previousWeight = weightValues.dropLast().last
@@ -62,56 +86,75 @@ struct BodyMetricsView: View {
                 let waistPoints = metricPoints(entries: filteredEntries, value: \.waistCm)
                 let stepsPoints = metricPoints(entries: filteredEntries, value: \.steps)
                 let activeEnergyPoints = metricPoints(entries: filteredEntries, value: \.activeEnergyKcal)
-                CurrentWeightCanvas(
+                BodyMetricsSurfaceHeader(
+                    selectedSurface: selectedSurfaceBinding,
+                    latestEntryDate: latestEntry?.date,
                     latestWeight: latestWeight,
-                    previousWeight: previousWeight,
-                    lastWeekWeight: lastWeekWeight,
-                    lastMonthWeight: lastMonthWeight
-                )
-                TargetWeightCanvas(
                     targetWeight: store.settings.targetWeightKg,
-                    targetDate: store.settings.targetWeightDate
+                    entryCount: store.bodyMetrics.count
                 )
-                TargetProgressCanvas(
-                    currentWeight: latestWeight,
-                    targetWeight: store.settings.targetWeightKg,
-                    targetDate: store.settings.targetWeightDate,
-                    referenceDate: store.currentDay,
-                    calendar: store.appCalendar
-                )
-                BodyMetricAveragesCard(averages: averages, latestValues: latestValues)
-                AppleHealthSyncCard(
-                    lastSyncDate: healthSyncManager.lastSyncDate,
-                    lastSyncError: healthSyncManager.lastSyncError,
-                    isSyncing: healthSyncManager.isSyncing,
-                    onSync: { healthSyncManager.performManualSync(store: store) }
-                )
-
-                BodyMetricHistorySection(
-                    timeFrame: timeFrameBinding,
-                    weightPoints: weightPoints,
-                    leanMassPoints: leanMassPoints,
-                    bodyFatPoints: bodyFatPoints,
-                    waistPoints: waistPoints,
-                    stepsPoints: stepsPoints,
-                    activeEnergyPoints: activeEnergyPoints
-                )
-
-                if store.bodyMetrics.isEmpty {
-                    Text("No body metrics logged yet.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Entries")
-                        .font(.headline)
-                    ForEach(store.bodyMetrics, id: \.date) { entry in
-                        BodyMetricRow(entry: entry)
+                switch selectedSurface {
+                case .overview:
+                    CurrentWeightCanvas(
+                        latestWeight: latestWeight,
+                        previousWeight: previousWeight,
+                        lastWeekWeight: lastWeekWeight,
+                        lastMonthWeight: lastMonthWeight
+                    )
+                    TargetWeightCanvas(
+                        targetWeight: store.settings.targetWeightKg,
+                        targetDate: store.settings.targetWeightDate
+                    )
+                    TargetProgressCanvas(
+                        currentWeight: latestWeight,
+                        targetWeight: store.settings.targetWeightKg,
+                        targetDate: store.settings.targetWeightDate,
+                        referenceDate: store.currentDay,
+                        calendar: store.appCalendar
+                    )
+                    BodyMetricAveragesCard(averages: averages, latestValues: latestValues)
+                    AppleHealthSyncCard(
+                        lastSyncDate: healthSyncManager.lastSyncDate,
+                        lastSyncError: healthSyncManager.lastSyncError,
+                        isSyncing: healthSyncManager.isSyncing,
+                        onSync: { healthSyncManager.performManualSync(store: store) }
+                    )
+                    BodyMetricsRecentEntriesCard(entries: Array(sortedEntries.suffix(3).reversed()))
+                case .trends:
+                    BodyMetricHistorySection(
+                        timeFrame: timeFrameBinding,
+                        weightPoints: weightPoints,
+                        leanMassPoints: leanMassPoints,
+                        bodyFatPoints: bodyFatPoints,
+                        waistPoints: waistPoints,
+                        stepsPoints: stepsPoints,
+                        activeEnergyPoints: activeEnergyPoints
+                    )
+                case .entries:
+                    if sortedEntries.isEmpty {
+                        BodyMetricsEmptyStateCard(
+                            title: "No body entries yet",
+                            message: "Log weight, body composition, or activity metrics to build your trend view."
+                        )
+                    } else {
+                        BodyMetricsEntriesHeader(entryCount: sortedEntries.count, latestEntryDate: latestEntry?.date)
+                        ForEach(sortedEntries.reversed(), id: \.date) { entry in
+                            BodyMetricRow(entry: entry)
+                        }
                     }
                 }
             }
             .padding(20)
         }
-        .navigationTitle("Body Metrics")
+        .background(
+            LinearGradient(
+                colors: [Color(.systemGroupedBackground), Color.blue.opacity(0.04)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+        )
+        .navigationTitle("Body")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -345,6 +388,155 @@ private struct CanvasMetricRow: View {
                 .monospacedDigit()
                 .frame(minWidth: 64, alignment: .trailing)
         }
+    }
+}
+
+private enum BodyMetricsSurface: String, CaseIterable, Identifiable {
+    case overview
+    case trends
+    case entries
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .overview: return "Overview"
+        case .trends: return "Trends"
+        case .entries: return "Entries"
+        }
+    }
+}
+
+private struct BodyMetricsSurfaceHeader: View {
+    @Binding var selectedSurface: BodyMetricsSurface
+    let latestEntryDate: Date?
+    let latestWeight: Double?
+    let targetWeight: Double?
+    let entryCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Body dashboard")
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                Text("Track progress without opening every chart at once.")
+                    .font(.title3.weight(.semibold))
+                HStack(spacing: 12) {
+                    BodyMetricsHeaderMetric(label: "Latest", value: latestWeight.map { "\($0.cleanNumber) kg" } ?? "--")
+                    BodyMetricsHeaderMetric(label: "Target", value: targetWeight.map { "\($0.cleanNumber) kg" } ?? "--")
+                    BodyMetricsHeaderMetric(label: "Entries", value: "\(entryCount)")
+                }
+                if let latestEntryDate {
+                    Text("Last update \(latestEntryDate.formatted(date: .abbreviated, time: .omitted))")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Picker("Body Surface", selection: $selectedSurface) {
+                ForEach(BodyMetricsSurface.allCases) { surface in
+                    Text(surface.label).tag(surface)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.blue.opacity(0.16), Color.mint.opacity(0.10), Color(.secondarySystemBackground)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+}
+
+private struct BodyMetricsHeaderMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.headline.monospacedDigit())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.thinMaterial)
+        )
+    }
+}
+
+private struct BodyMetricsRecentEntriesCard: View {
+    let entries: [BodyMetricEntry]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Recent entries")
+                .font(.headline)
+            if entries.isEmpty {
+                Text("Add your first body update to start tracking trends.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(entries, id: \.date) { entry in
+                    BodyMetricRow(entry: entry)
+                }
+            }
+        }
+    }
+}
+
+private struct BodyMetricsEntriesHeader: View {
+    let entryCount: Int
+    let latestEntryDate: Date?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Entries")
+                .font(.headline)
+            Text(summaryText)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var summaryText: String {
+        if let latestEntryDate {
+            return "\(entryCount) logged update\(entryCount == 1 ? "" : "s"), latest on \(latestEntryDate.formatted(date: .abbreviated, time: .omitted))."
+        }
+        return "No updates logged yet."
+    }
+}
+
+private struct BodyMetricsEmptyStateCard: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
     }
 }
 
