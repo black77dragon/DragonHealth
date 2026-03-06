@@ -20,6 +20,8 @@ struct TodayView: View {
     @State private var viewingEntry: DailyLogEntry?
     @State private var saveConfirmationMessage: String?
     @State private var saveConfirmationTask: Task<Void, Never>?
+    @State private var showingDailyOverview = false
+    @State private var showingDetailedLog = false
     @AppStorage("today.categoryDisplayStyle") private var categoryDisplayStyleRaw: String = CategoryDisplayStyle.compactRings.rawValue
     @AppStorage("today.mealDisplayStyle") private var mealDisplayStyleRaw: String = MealDisplayStyle.miniCards.rawValue
     @AppStorage("today.quickAddStyle") private var quickAddStyleRaw: String = QuickAddStyle.standard.rawValue
@@ -36,81 +38,140 @@ struct TodayView: View {
     private var quickAddStyle: QuickAddStyle {
         QuickAddStyle(rawValue: quickAddStyleRaw) ?? .standard
     }
+
+    private var visibleCategories: [Core.Category] {
+        store.categories.filter { $0.isEnabled }
+    }
+
+    private var mealEntries: [DailyLogEntry] {
+        dailyLog?.entries ?? []
+    }
+
+    private var currentMealSlot: MealSlot? {
+        guard let mealSlotID = store.currentMealSlotID() else { return nil }
+        return store.mealSlots.first(where: { $0.id == mealSlotID })
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                let visibleCategories = store.categories.filter { $0.isEnabled }
-                let mealEntries = dailyLog?.entries ?? []
-
-                TodayHeaderView(
+            VStack(alignment: .leading, spacing: 20) {
+                TodayHeroCard(
                     adherence: adherence,
                     scoreSummary: scoreSummary,
                     categories: store.categories,
                     totals: totals,
+                    currentMealSlotName: currentMealSlot?.name,
                     onExplainScore: scoreSummary == nil ? nil : { showingScoreExplain = true }
                 )
 
-                if !visibleCategories.isEmpty {
-                    TodayPriorityStackView(
-                        categories: visibleCategories,
-                        totals: totals,
-                        scoreSummary: scoreSummary,
-                        onQuickAddAmount: { categoryID, amount in
-                            Task { await logQuickAmount(categoryID: categoryID, amount: amount) }
-                        },
-                        onLogNow: { categoryID in
-                            openQuickAdd(categoryID: categoryID)
-                        }
-                    )
+                TodayQuickActionsStrip(
+                    currentMealSlotName: currentMealSlot?.name,
+                    onQuickAdd: { openQuickAdd() },
+                    onVoiceLog: { showingVoiceLog = true },
+                    onPhotoLog: { showingPhotoLog = true }
+                )
 
-                    TodayMealTimelineRail(
-                        mealSlots: store.mealSlots,
-                        entries: mealEntries,
-                        currentMealSlotID: store.currentMealSlotID(),
-                        onQuickAddForMeal: { mealSlotID in
-                            openQuickAdd(categoryID: nil, mealSlotID: mealSlotID)
+                if !visibleCategories.isEmpty {
+                    TodaySectionBlock(
+                        title: "Act now",
+                        subtitle: "Focus on the next decision, not the whole day."
+                    ) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            TodayPriorityStackView(
+                                categories: visibleCategories,
+                                totals: totals,
+                                scoreSummary: scoreSummary,
+                                onQuickAddAmount: { categoryID, amount in
+                                    Task { await logQuickAmount(categoryID: categoryID, amount: amount) }
+                                },
+                                onLogNow: { categoryID in
+                                    openQuickAdd(categoryID: categoryID)
+                                }
+                            )
+
+                            TodayMealTimelineRail(
+                                mealSlots: store.mealSlots,
+                                entries: mealEntries,
+                                currentMealSlotID: currentMealSlot?.id,
+                                onQuickAddForMeal: { mealSlotID in
+                                    openQuickAdd(categoryID: nil, mealSlotID: mealSlotID)
+                                }
+                            )
                         }
-                    )
+                    }
                 }
 
                 if visibleCategories.isEmpty {
-                    Text("No categories configured yet.")
-                        .foregroundStyle(.secondary)
+                    TodayEmptyStateCard(
+                        title: "No categories configured yet",
+                        message: "Set up your tracking categories in More before you start logging today."
+                    )
                 } else {
-                    CategoryOverviewGrid(
-                        categories: visibleCategories,
-                        totals: totals,
-                        style: categoryDisplayStyle
-                    ) { category in
-                        CategoryDayDetailView(category: category)
+                    TodaySectionBlock(
+                        title: "Progress",
+                        subtitle: "A calm overview of where today stands."
+                    ) {
+                        CategoryOverviewGrid(
+                            categories: visibleCategories,
+                            totals: totals,
+                            style: categoryDisplayStyle
+                        ) { category in
+                            CategoryDayDetailView(category: category)
+                        }
                     }
                 }
 
-                TodayMealBreakdownView(
-                    mealSlots: store.mealSlots,
-                    entries: mealEntries,
-                    categories: store.categories,
-                    style: mealDisplayStyle
-                )
-
-                TodayMealDetailsSection(
-                    mealSlots: store.mealSlots,
-                    entries: mealEntries,
-                    categories: store.categories,
-                    foodItems: store.foodItems,
-                    onViewDetails: { entry in
-                        viewingEntry = entry
-                    },
-                    onEdit: { entry in
-                        editingEntry = entry
-                    },
-                    onDelete: { entry in
-                        Task {
-                            await store.deleteEntry(entry)
-                            await loadToday()
-                        }
+                TodaySectionBlock(
+                    title: "Overview",
+                    subtitle: "Open the broader daily picture only when you need it."
+                ) {
+                    DisclosureGroup(isExpanded: $showingDailyOverview) {
+                        TodayMealBreakdownView(
+                            mealSlots: store.mealSlots,
+                            entries: mealEntries,
+                            categories: store.categories,
+                            style: mealDisplayStyle
+                        )
+                        .padding(.top, 10)
+                    } label: {
+                        TodayDisclosureLabel(
+                            title: "Meal overview",
+                            subtitle: "See distribution by meal without opening the full log."
+                        )
                     }
-                )
+                }
+
+                TodaySectionBlock(
+                    title: "Detailed log",
+                    subtitle: "Everything is still here, just not shouting for attention."
+                ) {
+                    DisclosureGroup(isExpanded: $showingDetailedLog) {
+                        TodayMealDetailsSection(
+                            mealSlots: store.mealSlots,
+                            entries: mealEntries,
+                            categories: store.categories,
+                            foodItems: store.foodItems,
+                            onViewDetails: { entry in
+                                viewingEntry = entry
+                            },
+                            onEdit: { entry in
+                                editingEntry = entry
+                            },
+                            onDelete: { entry in
+                                Task {
+                                    await store.deleteEntry(entry)
+                                    await loadToday()
+                                }
+                            }
+                        )
+                        .padding(.top, 10)
+                    } label: {
+                        TodayDisclosureLabel(
+                            title: "Entries by meal",
+                            subtitle: mealEntries.isEmpty ? "No entries yet for today." : "\(mealEntries.count) entries logged today."
+                        )
+                    }
+                }
             }
             .padding(20)
         }
@@ -120,34 +181,14 @@ struct TodayView: View {
                 TodayNavTitleView(date: store.currentDay)
             }
             ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 6) {
-                    Button {
-                        openQuickAdd()
-                    } label: {
-                        Image(systemName: "plus")
-                            .glassLabel(.icon)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Quick Add")
-
-                    Button {
-                        showingVoiceLog = true
-                    } label: {
-                        Image(systemName: "mic")
-                            .glassLabel(.icon)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Voice Log")
-
-                    Button {
-                        showingPhotoLog = true
-                    } label: {
-                        Image(systemName: "camera")
-                            .glassLabel(.icon)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Photo Log")
+                Button {
+                    openQuickAdd()
+                } label: {
+                    Image(systemName: "plus")
+                        .glassLabel(.icon)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Quick Add")
             }
         }
         .sheet(isPresented: $showingScoreExplain) {
@@ -404,6 +445,288 @@ private struct TodayNavTitleView: View {
         .lineLimit(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Today, \(TodayDateFormatter.string(from: date))")
+    }
+}
+
+private struct TodayHeroCard: View {
+    let adherence: DailyAdherenceSummary?
+    let scoreSummary: DailyScoreSummary?
+    let categories: [Core.Category]
+    let totals: [UUID: Double]
+    let currentMealSlotName: String?
+    let onExplainScore: (() -> Void)?
+
+    private var enabledCategories: [Core.Category] {
+        categories.filter { $0.isEnabled }
+    }
+
+    private var metCount: Int {
+        adherence?.categoryResults.filter(\.targetMet).count ?? 0
+    }
+
+    private var nextMove: String {
+        guard let adherence else {
+            return "Start with one quick log to establish momentum."
+        }
+
+        let categoriesByID = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
+        let biggestGap = adherence.categoryResults
+            .filter { !$0.targetMet }
+            .compactMap { result -> (Core.Category, Double, Bool)? in
+                guard let category = categoriesByID[result.categoryID] else { return nil }
+                let missing = missingAmount(rule: category.targetRule, total: result.total)
+                let excess = excessAmount(rule: category.targetRule, total: result.total)
+                if missing > 0 { return (category, missing, true) }
+                if excess > 0 { return (category, excess, false) }
+                return nil
+            }
+            .max(by: { $0.1 < $1.1 })
+
+        guard let biggestGap else {
+            return "You are on track. Keep the next meal simple and consistent."
+        }
+
+        if biggestGap.2 {
+            return "Best next move: add \(biggestGap.0.name.lowercased()) at your next meal."
+        }
+        return "Best next move: hold \(biggestGap.0.name.lowercased()) steady for the rest of today."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Today at a glance")
+                        .font(.headline)
+                    Text(nextMove)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let scoreSummary {
+                    VStack(alignment: .trailing, spacing: 8) {
+                        ScoreBadge(score: scoreSummary.overallScore)
+                        if let onExplainScore {
+                            Button("Score details") {
+                                onExplainScore()
+                            }
+                            .glassButton(.compact)
+                            .font(.caption)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 12) {
+                TodayHeroMetric(
+                    title: "Targets met",
+                    value: "\(metCount)/\(max(enabledCategories.count, 1))",
+                    detail: enabledCategories.isEmpty ? "Configure goals" : "Across enabled categories"
+                )
+                TodayHeroMetric(
+                    title: "Current meal",
+                    value: currentMealSlotName ?? "Auto",
+                    detail: "Default context for quick logging"
+                )
+            }
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.accentColor.opacity(0.18), Color.orange.opacity(0.08), Color(.secondarySystemBackground)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.45), lineWidth: 0.8)
+        )
+    }
+}
+
+private struct TodayHeroMetric: View {
+    let title: String
+    let value: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .tracking(1.0)
+            Text(value)
+                .font(.title3.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.systemBackground).opacity(0.65), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+private struct TodayQuickActionsStrip: View {
+    let currentMealSlotName: String?
+    let onQuickAdd: () -> Void
+    let onVoiceLog: () -> Void
+    let onPhotoLog: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Fast lane")
+                .font(.headline)
+
+            HStack(spacing: 12) {
+                TodayQuickActionButton(title: "Quick Add", subtitle: currentMealSlotName ?? "Auto meal", systemImage: "plus.circle.fill", tint: .blue, action: onQuickAdd)
+                TodayQuickActionButton(title: "Voice", subtitle: "Speak a draft", systemImage: "waveform.circle.fill", tint: .teal, action: onVoiceLog)
+            }
+
+            HStack(spacing: 12) {
+                TodayQuickActionButton(title: "Photo", subtitle: "Review from image", systemImage: "camera.circle.fill", tint: .orange, action: onPhotoLog)
+                TodayQuickActionLink(title: "Night Guard", subtitle: "Evening routine", systemImage: "moon.stars.fill", tint: .indigo) {
+                    NightGuardView()
+                }
+            }
+        }
+    }
+}
+
+private struct TodayQuickActionButton: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            TodayQuickActionTile(title: title, subtitle: subtitle, systemImage: systemImage, tint: tint)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct TodayQuickActionLink<Destination: View>: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let tint: Color
+    let destination: Destination
+
+    init(title: String, subtitle: String, systemImage: String, tint: Color, @ViewBuilder destination: () -> Destination) {
+        self.title = title
+        self.subtitle = subtitle
+        self.systemImage = systemImage
+        self.tint = tint
+        self.destination = destination()
+    }
+
+    var body: some View {
+        NavigationLink {
+            destination
+        } label: {
+            TodayQuickActionTile(title: title, subtitle: subtitle, systemImage: systemImage, tint: tint)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct TodayQuickActionTile: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.title2)
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+}
+
+private struct TodaySectionBlock<Content: View>: View {
+    let title: String
+    let subtitle: String
+    let content: Content
+
+    init(title: String, subtitle: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.subtitle = subtitle
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            content
+        }
+    }
+}
+
+private struct TodayEmptyStateCard: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+}
+
+private struct TodayDisclosureLabel: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

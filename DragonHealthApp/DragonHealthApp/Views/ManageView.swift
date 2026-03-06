@@ -4,135 +4,228 @@ import PhotosUI
 import UIKit
 
 struct ManageView: View {
+    @EnvironmentObject private var store: AppStore
+
+    private var latestWeight: Double? {
+        store.bodyMetrics.compactMap(\.weightKg).first
+    }
+
     var body: some View {
-        Form {
-            Section("Profile & Care Team") {
-                NavigationLink {
-                    ProfileDetailsView()
-                } label: {
-                    Label("Profile Details", systemImage: "person.crop.circle")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                MoreHeroCard(
+                    targetWeightKg: store.settings.targetWeightKg,
+                    latestWeightKg: latestWeight,
+                    doctorName: store.settings.doctorName,
+                    nutritionistName: store.settings.nutritionistName
+                )
+
+                MoreSectionCard(title: "Daily support", subtitle: "Frequent actions and routines.") {
+                    MoreLinkRow(title: "Night Guard", subtitle: "Evening routine and reminders", systemImage: "moon.stars") {
+                        NightGuardView()
+                    }
+                    MoreLinkRow(title: "Today View", subtitle: "Tune the home screen presentation", systemImage: "sun.max") {
+                        TodayViewSettingsView()
+                    }
+                    MoreLinkRow(title: "Document Library", subtitle: "Store PDFs and images for reference", systemImage: "doc.text") {
+                        DocumentsView()
+                    }
                 }
 
-                NavigationLink {
-                    CareTeamSettingsView()
-                } label: {
-                    Label("Care Team", systemImage: "person.2")
+                MoreSectionCard(title: "Profile & care", subtitle: "Your personal context and support team.") {
+                    MoreLinkRow(title: "Profile Details", subtitle: "Photo, goals, motivation, and body targets", systemImage: "person.crop.circle") {
+                        ProfileDetailsView()
+                    }
+                    MoreLinkRow(title: "Care Team", subtitle: "Doctor and nutrition specialist details", systemImage: "person.2") {
+                        CareTeamSettingsView()
+                    }
+                    MoreLinkRow(title: "Meeting Log", subtitle: "Track care visits and notes", systemImage: "list.bullet.rectangle") {
+                        CareTeamLogView()
+                    }
+                    MoreLinkRow(title: "Care Team Brief", subtitle: "Generate a concise summary for visits", systemImage: "doc.text.magnifyingglass") {
+                        CareTeamBriefView()
+                    }
                 }
 
-                NavigationLink {
-                    CareTeamLogView()
-                } label: {
-                    Label("Meeting Log", systemImage: "list.bullet.rectangle")
+                MoreSectionCard(title: "Plan & targets", subtitle: "How DragonHealth interprets your routine.") {
+                    MoreLinkRow(title: "Day Boundary", subtitle: "Define when a day starts and ends", systemImage: "clock") {
+                        DayBoundarySettingsView()
+                    }
+                    MoreLinkRow(title: "Meal Timing", subtitle: "Control automatic meal-slot selection", systemImage: "clock.arrow.circlepath") {
+                        MealTimingSettingsView()
+                    }
+                    MoreLinkRow(title: "Categories", subtitle: "Edit what you track and each target rule", systemImage: "square.grid.2x2") {
+                        CategoriesView()
+                    }
+                    MoreLinkRow(title: "Scoring", subtitle: "Adjust score behavior and compensation rules", systemImage: "speedometer") {
+                        ScoringSettingsView()
+                    }
+                    MoreLinkRow(title: "Units", subtitle: "Manage measurement units used in the app", systemImage: "ruler") {
+                        UnitsView()
+                    }
+                    MoreLinkRow(title: "Meal Slots", subtitle: "Organize meals and their order", systemImage: "fork.knife") {
+                        MealSlotsView()
+                    }
                 }
 
-                NavigationLink {
-                    CareTeamBriefView()
-                } label: {
-                    Label("Care Team Brief", systemImage: "doc.text.magnifyingglass")
+                MoreSectionCard(title: "Data & integrations", subtitle: "Connections, backup, and recovery.") {
+                    MoreLinkRow(title: "Food Library Transfer", subtitle: "Import or move library content", systemImage: "arrow.up.arrow.down.square") {
+                        FoodLibraryTransferView()
+                    }
+                    MoreLinkRow(title: "iCloud Backup", subtitle: "Review backup status and create backups", systemImage: "icloud") {
+                        BackupSettingsView()
+                    }
+                    MoreLinkRow(title: "Restore Backup", subtitle: "Recover tracked database data from iCloud", systemImage: "arrow.counterclockwise") {
+                        RestoreBackupView()
+                    }
+                    MoreLinkRow(title: "Apple Health", subtitle: "Sync weight, movement, and body metrics", systemImage: "heart") {
+                        HealthSyncSettingsView()
+                    }
+                    MoreLinkRow(title: "Meal Photo AI", subtitle: "Configure photo-assisted logging", systemImage: "sparkles") {
+                        MealPhotoAISettingsView()
+                    }
+                    MoreLinkRow(title: "Unsplash", subtitle: "Manage food image search access", systemImage: "photo") {
+                        UnsplashSettingsView()
+                    }
+                }
+
+                MoreSectionCard(title: "App", subtitle: "Appearance, privacy, and version info.") {
+                    MoreLinkRow(title: "Privacy & Version", subtitle: "Theme, font size, and app details", systemImage: "info.circle") {
+                        AboutView()
+                    }
                 }
             }
+            .padding(20)
+        }
+        .navigationTitle("More")
+        .background(Color(.systemGroupedBackground))
+    }
+}
 
-            Section("Plan & Meals") {
-                NavigationLink {
-                    DayBoundarySettingsView()
-                } label: {
-                    Label("Day Boundary", systemImage: "clock")
-                }
+private struct MoreHeroCard: View {
+    let targetWeightKg: Double?
+    let latestWeightKg: Double?
+    let doctorName: String?
+    let nutritionistName: String?
 
-                NavigationLink {
-                    MealTimingSettingsView()
-                } label: {
-                    Label("Meal Timing", systemImage: "clock.arrow.circlepath")
-                }
+    private var targetSummary: String {
+        switch (latestWeightKg, targetWeightKg) {
+        case let (current?, target?):
+            return "\(current.cleanNumber) kg now -> \(target.cleanNumber) kg goal"
+        case let (_, target?):
+            return "Target weight \(target.cleanNumber) kg"
+        case let (current?, _):
+            return "Latest weight \(current.cleanNumber) kg"
+        default:
+            return "Set up your profile and goals to personalize DragonHealth."
+        }
+    }
 
-                NavigationLink {
-                    TodayViewSettingsView()
-                } label: {
-                    Label("Today View", systemImage: "sun.max")
-                }
+    private var careSummary: String {
+        let names = [doctorName, nutritionistName]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if names.isEmpty {
+            return "No care team linked yet."
+        }
+        return names.joined(separator: " • ")
+    }
 
-                NavigationLink {
-                    CategoriesView()
-                } label: {
-                    Label("Categories", systemImage: "square.grid.2x2")
-                }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Personal setup")
+                .font(.headline)
+            Text(targetSummary)
+                .font(.subheadline)
+            Text(careSummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.accentColor.opacity(0.18), Color.blue.opacity(0.06), Color(.secondarySystemBackground)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+}
 
-                NavigationLink {
-                    ScoringSettingsView()
-                } label: {
-                    Label("Scoring", systemImage: "speedometer")
-                }
+private struct MoreSectionCard<Content: View>: View {
+    let title: String
+    let subtitle: String
+    let content: Content
 
-                NavigationLink {
-                    UnitsView()
-                } label: {
-                    Label("Units", systemImage: "ruler")
-                }
+    init(title: String, subtitle: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.subtitle = subtitle
+        self.content = content()
+    }
 
-                NavigationLink {
-                    MealSlotsView()
-                } label: {
-                    Label("Meal Slots", systemImage: "fork.knife")
-                }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-
-            Section("Data & Backup") {
-                NavigationLink {
-                    FoodLibraryTransferView()
-                } label: {
-                    Label("Food Library Transfer", systemImage: "arrow.up.arrow.down.square")
-                }
-
-                NavigationLink {
-                    BackupSettingsView()
-                } label: {
-                    Label("iCloud Backup", systemImage: "icloud")
-                }
-
-                NavigationLink {
-                    RestoreBackupView()
-                } label: {
-                    Label("Restore Backup", systemImage: "arrow.counterclockwise")
-                }
+            VStack(spacing: 0) {
+                content
             }
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+}
 
-            Section("Integrations") {
-                NavigationLink {
-                    HealthSyncSettingsView()
-                } label: {
-                    Label("Apple Health", systemImage: "heart")
-                }
+private struct MoreLinkRow<Destination: View>: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let destination: Destination
 
-                NavigationLink {
-                    MealPhotoAISettingsView()
-                } label: {
-                    Label("Meal Photo AI", systemImage: "sparkles")
-                }
+    init(title: String, subtitle: String, systemImage: String, @ViewBuilder destination: () -> Destination) {
+        self.title = title
+        self.subtitle = subtitle
+        self.systemImage = systemImage
+        self.destination = destination()
+    }
 
-                NavigationLink {
-                    UnsplashSettingsView()
-                } label: {
-                    Label("Unsplash", systemImage: "photo")
+    var body: some View {
+        NavigationLink {
+            destination
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.body.weight(.semibold))
+                    .frame(width: 24)
+                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
                 }
+                Spacer()
             }
-
-            Section("Documents") {
-                NavigationLink {
-                    DocumentsView()
-                } label: {
-                    Label("Document Library", systemImage: "doc.text")
-                }
-            }
-
-            Section("About") {
-                NavigationLink {
-                    AboutView()
-                } label: {
-                    Label("Privacy & Version", systemImage: "info.circle")
-                }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .bottom) {
+                Divider()
+                    .padding(.leading, 50)
             }
         }
-        .navigationTitle("Manage")
+        .buttonStyle(.plain)
     }
 }
 
@@ -145,9 +238,9 @@ private enum TodayCategoryDisplayStyleOption: String, CaseIterable, Identifiable
 
     var label: String {
         switch self {
-        case .compactRings: return "Rings (A)"
-        case .inlineLabel: return "Inline (B)"
-        case .capsuleRows: return "Capsules (C)"
+        case .compactRings: return "Compact rings"
+        case .inlineLabel: return "Inline labels"
+        case .capsuleRows: return "Capsule rows"
         }
     }
 }
@@ -160,8 +253,8 @@ private enum TodayMealDisplayStyleOption: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .miniCards: return "Cards (F)"
-        case .stackedStrips: return "Strips (G)"
+        case .miniCards: return "Mini cards"
+        case .stackedStrips: return "Stacked strips"
         }
     }
 }
@@ -175,7 +268,7 @@ private enum TodayQuickAddStyleOption: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .standard: return "Standard"
-        case .categoryFirst: return "Category-first (Alt)"
+        case .categoryFirst: return "Category guided"
         }
     }
 }
