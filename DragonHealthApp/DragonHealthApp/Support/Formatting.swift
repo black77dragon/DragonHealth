@@ -27,30 +27,30 @@ extension Double {
 }
 
 enum DrinkRules {
-    static let mlPerLiter: Double = 1000.0
+    nonisolated static let mlPerLiter: Double = 1000.0
 
-    static func isDrinkCategory(_ category: Core.Category) -> Bool {
+    nonisolated static func isDrinkCategory(_ category: Core.Category) -> Bool {
         let lowerName = category.name.lowercased()
         let lowerUnit = category.unitName.lowercased()
         return lowerName.contains("drink") || lowerUnit == "l" || lowerUnit == "ml"
     }
 
-    static func portionIncrement(for category: Core.Category?) -> Double {
+    nonisolated static func portionIncrement(for category: Core.Category?) -> Double {
         guard let category, isDrinkCategory(category) else { return Portion.defaultIncrement }
         return Portion.drinkIncrement
     }
 
-    static func isDrinkUnitSymbol(_ symbol: String?) -> Bool {
+    nonisolated static func isDrinkUnitSymbol(_ symbol: String?) -> Bool {
         guard let symbol else { return false }
         let normalized = symbol.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized == "ml" || normalized == "l"
     }
 
-    static func drinkUnits(from units: [Core.FoodUnit]) -> [Core.FoodUnit] {
+    nonisolated static func drinkUnits(from units: [Core.FoodUnit]) -> [Core.FoodUnit] {
         units.filter { isDrinkUnitSymbol($0.symbol) }
     }
 
-    static func liters(from amount: Double, unitSymbol: String?) -> Double? {
+    nonisolated static func liters(from amount: Double, unitSymbol: String?) -> Double? {
         guard amount.isFinite else { return nil }
         guard let unitSymbol else { return nil }
         switch unitSymbol.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
@@ -63,13 +63,13 @@ enum DrinkRules {
         }
     }
 
-    static func liters(from amount: Double, unitID: UUID?, units: [Core.FoodUnit]) -> Double? {
+    nonisolated static func liters(from amount: Double, unitID: UUID?, units: [Core.FoodUnit]) -> Double? {
         guard let unitID else { return nil }
         let symbol = units.first(where: { $0.id == unitID })?.symbol
         return liters(from: amount, unitSymbol: symbol)
     }
 
-    static func roundedLiters(_ liters: Double) -> Double {
+    nonisolated static func roundedLiters(_ liters: Double) -> Double {
         Portion.roundToIncrement(liters, increment: Portion.drinkIncrement)
     }
 }

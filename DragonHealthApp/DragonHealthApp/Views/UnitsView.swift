@@ -103,7 +103,7 @@ private struct UnitDetailView: View {
                     Button("Save") {
                         Task {
                             await store.saveUnit(unit)
-                            await MainActor.run { dismiss() }
+                            dismiss()
                         }
                     }
                     .glassButton(.text)

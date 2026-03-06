@@ -66,7 +66,7 @@ struct CategoryDetailView: View {
                 category.targetRule = ruleKind.buildRule(value: ruleValue, min: rangeMin, max: rangeMax)
                 Task {
                     await store.saveCategory(category)
-                    await MainActor.run { dismiss() }
+                    dismiss()
                 }
             }
             .glassButton(.text)

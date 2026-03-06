@@ -182,6 +182,15 @@ public enum CareProviderType: String, CaseIterable, Hashable, Sendable {
             return "Nutrition Specialist"
         }
     }
+
+    public var symbolName: String {
+        switch self {
+        case .doctor:
+            return "stethoscope"
+        case .nutritionist:
+            return "leaf"
+        }
+    }
 }
 
 public struct CareMeeting: Identifiable, Hashable, Sendable {
@@ -306,6 +315,23 @@ public enum AppAppearance: String, CaseIterable, Hashable, Sendable {
     }
 }
 
+public enum AppFontSize: String, CaseIterable, Hashable, Sendable {
+    case small
+    case standard
+    case large
+
+    public var label: String {
+        switch self {
+        case .small:
+            return "Small"
+        case .standard:
+            return "Standard"
+        case .large:
+            return "Large"
+        }
+    }
+}
+
 public struct HealthDocument: Identifiable, Hashable, Sendable {
     public let id: UUID
     public var title: String
@@ -340,6 +366,7 @@ public struct AppSettings: Hashable, Sendable {
     public var foodSeedVersion: Int
     public var showLaunchSplash: Bool
     public var appearance: AppAppearance
+    public var fontSize: AppFontSize
     public var mealSlotTimings: [MealSlotTiming]
 
     public init(
@@ -354,6 +381,7 @@ public struct AppSettings: Hashable, Sendable {
         foodSeedVersion: Int = 0,
         showLaunchSplash: Bool = true,
         appearance: AppAppearance = .system,
+        fontSize: AppFontSize = .standard,
         mealSlotTimings: [MealSlotTiming] = []
     ) {
         self.dayCutoffMinutes = dayCutoffMinutes
@@ -367,6 +395,7 @@ public struct AppSettings: Hashable, Sendable {
         self.foodSeedVersion = foodSeedVersion
         self.showLaunchSplash = showLaunchSplash
         self.appearance = appearance
+        self.fontSize = fontSize
         self.mealSlotTimings = mealSlotTimings
     }
 

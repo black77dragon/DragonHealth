@@ -32,6 +32,7 @@ struct ContentView: View {
             resolveLaunchSplashIfNeeded()
         }
         .preferredColorScheme(store.settings.appearance.colorScheme)
+        .dynamicTypeSize(store.settings.fontSize.dynamicTypeSize)
     }
 
     private var shouldShowLaunchSplash: Bool {
@@ -57,10 +58,10 @@ struct ContentView: View {
             .padding()
         case .ready:
             TabView {
-                NavigationStack { TodayView() }
-                    .tabItem { Label("Today", systemImage: "sun.max") }
-                NavigationStack { HistoryView() }
-                    .tabItem { Label("History", systemImage: "calendar") }
+                NavigationStack { DailyHubView() }
+                    .tabItem { Label("Daily", systemImage: "sun.max") }
+                NavigationStack { NightGuardView() }
+                    .tabItem { Label("Night Guard", systemImage: "moon.stars") }
                 NavigationStack { BodyMetricsView() }
                     .tabItem { Label("Body", systemImage: "waveform.path.ecg") }
                 NavigationStack { LibraryView() }
@@ -113,6 +114,19 @@ struct ContentView: View {
         withAnimation(.easeInOut(duration: 0.25)) {
             isSplashVisible = false
             hasResolvedLaunchSplash = true
+        }
+    }
+}
+
+private extension Core.AppFontSize {
+    var dynamicTypeSize: DynamicTypeSize {
+        switch self {
+        case .small:
+            return .xSmall
+        case .standard:
+            return .large
+        case .large:
+            return .xLarge
         }
     }
 }

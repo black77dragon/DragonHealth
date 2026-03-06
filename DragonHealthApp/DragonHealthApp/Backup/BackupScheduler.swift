@@ -38,7 +38,7 @@ final class BackupScheduler {
 
     private func handleAppRefresh(_ task: BGAppRefreshTask) {
         scheduleNext()
-        let operation = Task.detached {
+        let operation = Task(priority: .background) {
             await BackupWorker.shared.performBackupIfNeeded()
         }
         task.expirationHandler = {

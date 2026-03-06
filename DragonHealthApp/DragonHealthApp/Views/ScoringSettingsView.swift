@@ -278,7 +278,7 @@ private struct CategoryScoreProfileView: View {
                     } else {
                         await store.deleteScoreProfile(categoryID: category.id)
                     }
-                    await MainActor.run { dismiss() }
+                    dismiss()
                 }
             }
             .glassButton(.text)
@@ -340,7 +340,7 @@ private struct CompensationRuleDetailView: View {
                         maxOffset: maxOffset
                     )
                     await store.saveCompensationRule(updated)
-                    await MainActor.run { dismiss() }
+                    dismiss()
                 }
             }
             .glassButton(.text)

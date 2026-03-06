@@ -10,9 +10,12 @@ struct TodayView: View {
     @State private var totals: [UUID: Double] = [:]
     @State private var adherence: DailyAdherenceSummary?
     @State private var scoreSummary: DailyScoreSummary?
+    @State private var showingScoreExplain = false
     @State private var showingQuickAdd = false
     @State private var showingVoiceLog = false
     @State private var showingPhotoLog = false
+    @State private var quickAddPrefillCategoryID: UUID?
+    @State private var quickAddPrefillMealSlotID: UUID?
     @State private var editingEntry: DailyLogEntry?
     @State private var viewingEntry: DailyLogEntry?
     @State private var saveConfirmationMessage: String?
@@ -36,9 +39,40 @@ struct TodayView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                TodayHeaderView(adherence: adherence, scoreSummary: scoreSummary, categories: store.categories)
-
                 let visibleCategories = store.categories.filter { $0.isEnabled }
+                let mealEntries = dailyLog?.entries ?? []
+
+                TodayHeaderView(
+                    adherence: adherence,
+                    scoreSummary: scoreSummary,
+                    categories: store.categories,
+                    totals: totals,
+                    onExplainScore: scoreSummary == nil ? nil : { showingScoreExplain = true }
+                )
+
+                if !visibleCategories.isEmpty {
+                    TodayPriorityStackView(
+                        categories: visibleCategories,
+                        totals: totals,
+                        scoreSummary: scoreSummary,
+                        onQuickAddAmount: { categoryID, amount in
+                            Task { await logQuickAmount(categoryID: categoryID, amount: amount) }
+                        },
+                        onLogNow: { categoryID in
+                            openQuickAdd(categoryID: categoryID)
+                        }
+                    )
+
+                    TodayMealTimelineRail(
+                        mealSlots: store.mealSlots,
+                        entries: mealEntries,
+                        currentMealSlotID: store.currentMealSlotID(),
+                        onQuickAddForMeal: { mealSlotID in
+                            openQuickAdd(categoryID: nil, mealSlotID: mealSlotID)
+                        }
+                    )
+                }
+
                 if visibleCategories.isEmpty {
                     Text("No categories configured yet.")
                         .foregroundStyle(.secondary)
@@ -52,7 +86,6 @@ struct TodayView: View {
                     }
                 }
 
-                let mealEntries = dailyLog?.entries ?? []
                 TodayMealBreakdownView(
                     mealSlots: store.mealSlots,
                     entries: mealEntries,
@@ -89,7 +122,7 @@ struct TodayView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 HStack(spacing: 6) {
                     Button {
-                        showingQuickAdd = true
+                        openQuickAdd()
                     } label: {
                         Image(systemName: "plus")
                             .glassLabel(.icon)
@@ -117,14 +150,26 @@ struct TodayView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingQuickAdd) {
+        .sheet(isPresented: $showingScoreExplain) {
+            if let scoreSummary {
+                TodayScoreExplainSheet(
+                    scoreSummary: scoreSummary,
+                    categories: store.categories,
+                    totals: totals
+                )
+            }
+        }
+        .sheet(isPresented: $showingQuickAdd, onDismiss: {
+            quickAddPrefillCategoryID = nil
+            quickAddPrefillMealSlotID = nil
+        }) {
             QuickAddSheet(
                 categories: store.categories.filter { $0.isEnabled },
                 mealSlots: store.mealSlots,
                 foodItems: store.foodItems,
                 units: store.units,
-                preselectedCategoryID: nil,
-                preselectedMealSlotID: store.currentMealSlotID(),
+                preselectedCategoryID: quickAddPrefillCategoryID,
+                preselectedMealSlotID: quickAddPrefillMealSlotID ?? store.currentMealSlotID(),
                 contextDate: nil,
                 style: quickAddStyle,
                 onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
@@ -259,7 +304,10 @@ struct TodayView: View {
                     .font(.caption)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(.thinMaterial, in: Capsule())
+                    .background(
+                        Capsule()
+                            .fill(Color(.secondarySystemBackground))
+                    )
                     .padding(.top, 12)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -290,6 +338,29 @@ struct TodayView: View {
                 saveConfirmationMessage = nil
             }
         }
+    }
+
+    @MainActor
+    private func openQuickAdd(categoryID: UUID? = nil, mealSlotID: UUID? = nil) {
+        quickAddPrefillCategoryID = categoryID
+        quickAddPrefillMealSlotID = mealSlotID ?? store.currentMealSlotID()
+        showingQuickAdd = true
+    }
+
+    private func logQuickAmount(categoryID: UUID, amount: Double) async {
+        guard amount > 0 else { return }
+        guard let category = store.categories.first(where: { $0.id == categoryID }) else { return }
+        guard let mealSlotID = store.currentMealSlotID() ?? store.mealSlots.first?.id else { return }
+
+        let portion = Portion(amount, increment: DrinkRules.portionIncrement(for: category))
+        await store.logPortion(
+            date: Date(),
+            mealSlotID: mealSlotID,
+            categoryID: categoryID,
+            portion: portion,
+            notes: nil
+        )
+        await loadToday()
     }
 }
 
@@ -340,37 +411,95 @@ private struct TodayHeaderView: View {
     let adherence: DailyAdherenceSummary?
     let scoreSummary: DailyScoreSummary?
     let categories: [Core.Category]
+    let totals: [UUID: Double]
+    let onExplainScore: (() -> Void)?
 
     private struct GoalAction {
         let text: String
         let severity: Double
     }
 
-    private var goalSummaryText: String? {
-        guard let adherence else { return nil }
-        guard !adherence.categoryResults.isEmpty else { return "No category goals configured yet." }
+    private var focusPoints: [String] {
+        guard let adherence else { return [] }
+        guard !adherence.categoryResults.isEmpty else { return [] }
+
         let actions = goalActions(for: adherence)
         if actions.isEmpty {
-            return "All category goals met."
+            return ["Repeat what is working at your next meal."]
         }
+
         return actions
             .prefix(3)
             .map(\.text)
-            .joined(separator: ", ")
+    }
+
+    private var emptyGoalsText: String? {
+        guard let adherence else { return nil }
+        guard adherence.categoryResults.isEmpty else { return nil }
+        return "No category goals configured yet."
+    }
+
+    private var microCoachingText: String? {
+        guard let scoreSummary else { return nil }
+        let score = Int(scoreSummary.overallScore.rounded())
+        if score >= 85 {
+            return "Score \(score)/100: on track."
+        }
+        if score >= 70 {
+            return "Score \(score)/100: close to green. Focus on the priorities below."
+        }
+        return "Score \(score)/100: recovery mode. Focus on the priorities below."
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let scoreSummary {
-                ScoreBadge(score: scoreSummary.overallScore)
-                if let goalSummaryText {
-                    Text(goalSummaryText)
+                HStack {
+                    ScoreBadge(score: scoreSummary.overallScore)
+                    Spacer()
+                    if let onExplainScore {
+                        Button("Explain Score") {
+                            onExplainScore()
+                        }
+                        .glassButton(.compact)
+                        .font(.caption)
+                    }
+                }
+                if let microCoachingText {
+                    Text(microCoachingText)
+                        .font(.subheadline.weight(.semibold))
+                }
+                if !focusPoints.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Focus now")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(Array(focusPoints.enumerated()), id: \.offset) { index, point in
+                            Text("\(index + 1). \(point)")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                } else if let emptyGoalsText {
+                    Text(emptyGoalsText)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(3)
                 }
-            } else if let goalSummaryText {
-                Text(goalSummaryText)
+            } else if !focusPoints.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Focus now")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(Array(focusPoints.enumerated()), id: \.offset) { index, point in
+                        Text("\(index + 1). \(point)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            } else if let emptyGoalsText {
+                Text(emptyGoalsText)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
@@ -435,13 +564,13 @@ private struct TodayHeaderView: View {
         let severity = missing / safeTarget
 
         if isDrinkCategory(category) {
-            return GoalAction(text: "drink \(missing.cleanNumber)\(category.unitName.lowercased())", severity: severity)
+            return GoalAction(text: "drink \(missing.cleanNumber) \(category.unitName.lowercased())", severity: severity)
         }
         if isSportsCategory(category) {
             return GoalAction(text: "add \(missing.cleanNumber) \(category.unitName) activity", severity: severity)
         }
         if isCarbCategory(displayName) {
-            return GoalAction(text: "eat \(intensity)Carb", severity: severity)
+            return GoalAction(text: "add \(intensity)carbs", severity: severity)
         }
         if isProteinCategory(displayName) {
             return GoalAction(text: "add \(intensity)protein", severity: severity)
@@ -495,36 +624,398 @@ private struct TodayHeaderView: View {
     }
 }
 
+private struct TodayPriorityStackView: View {
+    let categories: [Core.Category]
+    let totals: [UUID: Double]
+    let scoreSummary: DailyScoreSummary?
+    let onQuickAddAmount: (UUID, Double) -> Void
+    let onLogNow: (UUID) -> Void
+
+    private var priorities: [TodayPriorityItem] {
+        let scoreByID = Dictionary(uniqueKeysWithValues: (scoreSummary?.categoryScores ?? []).map { ($0.categoryID, $0.score) })
+        return categories
+            .compactMap { category in
+                let total = totals[category.id] ?? 0
+                let missing = missingAmount(rule: category.targetRule, total: total)
+                let excess = excessAmount(rule: category.targetRule, total: total)
+                guard missing > 0 || excess > 0 else { return nil }
+                let direction: TodayPriorityDirection = missing > 0 ? .under : .over
+                let gap = max(missing, excess)
+                let scorePenalty = max(0, 100 - (scoreByID[category.id] ?? 100))
+                let impact = gap + (scorePenalty / 40.0)
+                return TodayPriorityItem(
+                    category: category,
+                    direction: direction,
+                    gap: gap,
+                    impact: impact,
+                    score: scoreByID[category.id]
+                )
+            }
+            .sorted { $0.impact > $1.impact }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Priority Stack")
+                .font(.headline)
+            if priorities.isEmpty {
+                Text("You are on track across categories.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(.secondarySystemBackground))
+                    )
+            } else {
+                ForEach(priorities.prefix(3)) { item in
+                    priorityCard(for: item)
+                }
+            }
+        }
+    }
+
+    private func priorityCard(for item: TodayPriorityItem) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.category.name)
+                        .font(.subheadline.weight(.semibold))
+                    Text(item.primaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let score = item.score {
+                        Text("Category score \(Int(score.rounded()))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Image(systemName: item.direction == .under ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
+                    .foregroundStyle(item.direction == .under ? .orange : .red)
+            }
+
+            if item.direction == .under {
+                HStack(spacing: 8) {
+                    ForEach(item.quickAmounts, id: \.self) { amount in
+                        Button("+\(amount.cleanNumber)") {
+                            onQuickAddAmount(item.category.id, amount)
+                        }
+                        .glassButton(.compact)
+                        .font(.caption)
+                    }
+                    Button("Log now") {
+                        onLogNow(item.category.id)
+                    }
+                    .glassButton(.compact)
+                    .font(.caption)
+                }
+            } else {
+                Text("Review this category before adding more today.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+}
+
+private struct TodayMealTimelineRail: View {
+    let mealSlots: [MealSlot]
+    let entries: [DailyLogEntry]
+    let currentMealSlotID: UUID?
+    let onQuickAddForMeal: (UUID) -> Void
+
+    private var countsByMealSlotID: [UUID: Int] {
+        Dictionary(grouping: entries, by: \.mealSlotID).mapValues(\.count)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Meal Timeline")
+                .font(.headline)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(mealSlots) { slot in
+                        let count = countsByMealSlotID[slot.id] ?? 0
+                        VStack(spacing: 8) {
+                            NavigationLink {
+                                MealDayDetailView(mealSlot: slot)
+                            } label: {
+                                TodayMealTimelineCell(
+                                    mealSlot: slot,
+                                    loggedCount: count,
+                                    isCurrent: slot.id == currentMealSlotID
+                                )
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                onQuickAddForMeal(slot.id)
+                            } label: {
+                                Image(systemName: "plus")
+                            }
+                            .glassButton(.compact)
+                            .accessibilityLabel("Add entry for \(slot.name)")
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+}
+
+private struct TodayMealTimelineCell: View {
+    let mealSlot: MealSlot
+    let loggedCount: Int
+    let isCurrent: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(loggedCount > 0 ? Color.green : Color(.systemGray4))
+                    .frame(width: 8, height: 8)
+                Text(mealSlot.name)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+
+            Text(loggedCount == 0 ? "No logs" : "\(loggedCount) entries")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minWidth: 118, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isCurrent ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isCurrent ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+        )
+    }
+}
+
+private struct TodayScoreExplainSheet: View {
+    let scoreSummary: DailyScoreSummary
+    let categories: [Core.Category]
+    let totals: [UUID: Double]
+    @Environment(\.dismiss) private var dismiss
+
+    private var rows: [TodayScoreExplainRow] {
+        let categoryByID = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
+        return scoreSummary.categoryScores
+            .compactMap { categoryScore in
+                guard let category = categoryByID[categoryScore.categoryID] else { return nil }
+                let effectiveTotal = totals[category.id] ?? categoryScore.adjustedTotal
+                let missing = missingAmount(rule: category.targetRule, total: effectiveTotal)
+                let excess = excessAmount(rule: category.targetRule, total: effectiveTotal)
+                let driver: String
+                let recommendation: String
+                if missing > 0 {
+                    driver = "Below target by \(missing.cleanNumber) \(category.unitName)"
+                    recommendation = "Add a small log in \(category.name.lowercased()) next."
+                } else if excess > 0 {
+                    driver = "Over target by \(excess.cleanNumber) \(category.unitName)"
+                    recommendation = "Pause \(category.name.lowercased()) for the next meal window."
+                } else {
+                    driver = "On target"
+                    recommendation = "Keep current pace."
+                }
+                return TodayScoreExplainRow(
+                    categoryName: category.name,
+                    score: categoryScore.score,
+                    driver: driver,
+                    recommendation: recommendation,
+                    isOnTarget: missing == 0 && excess == 0
+                )
+            }
+            .sorted { $0.score < $1.score }
+    }
+
+    private var bestNextMove: String {
+        if let underTarget = rows.first(where: { !$0.isOnTarget && $0.driver.hasPrefix("Below target") }) {
+            return "Fastest gain: \(underTarget.recommendation)"
+        }
+        if let offTarget = rows.first(where: { !$0.isOnTarget }) {
+            return "Fastest gain: \(offTarget.recommendation)"
+        }
+        return "All categories are aligned. Keep consistency through the next meal."
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Summary") {
+                    HStack {
+                        Text("Overall Score")
+                        Spacer()
+                        ScoreBadge(score: scoreSummary.overallScore)
+                    }
+                    Text(bestNextMove)
+                        .font(.subheadline)
+                }
+
+                Section("Drivers") {
+                    ForEach(rows) { row in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(row.categoryName)
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text("\(Int(row.score.rounded()))")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(ScoreColor.color(for: row.score))
+                            }
+                            Text(row.driver)
+                                .font(.caption)
+                            Text(row.recommendation)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+            }
+            .navigationTitle("Score Explain")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .glassButton(.text)
+                }
+            }
+        }
+    }
+}
+
+private struct TodayPriorityItem: Identifiable {
+    let category: Core.Category
+    let direction: TodayPriorityDirection
+    let gap: Double
+    let impact: Double
+    let score: Double?
+
+    var id: UUID { category.id }
+
+    var primaryText: String {
+        switch direction {
+        case .under:
+            return "Need \(gap.cleanNumber) \(category.unitName)"
+        case .over:
+            return "Over by \(gap.cleanNumber) \(category.unitName)"
+        }
+    }
+
+    var quickAmounts: [Double] {
+        if DrinkRules.isDrinkCategory(category) {
+            return [0.25, 0.5]
+        }
+        if category.name.lowercased().contains("sport") {
+            return [10, 20]
+        }
+        return [0.5, 1.0]
+    }
+}
+
+private struct TodayScoreExplainRow: Identifiable {
+    let id = UUID()
+    let categoryName: String
+    let score: Double
+    let driver: String
+    let recommendation: String
+    let isOnTarget: Bool
+}
+
+private enum TodayPriorityDirection {
+    case under
+    case over
+}
+
 private enum TodayTileMetrics {
-    static let gridSpacing: CGFloat = 10
-    static let compactHeight: CGFloat = 124
-    static let capsuleHeight: CGFloat = 60
-    static let tilePadding: CGFloat = 8
-    static let capsulePadding: CGFloat = 6
-    static let borderWidth: CGFloat = 1.0
-    static let cornerRadius: CGFloat = 6
-    static let missingStackedFontSize: CGFloat = 19
-    static let missingInlineFontSize: CGFloat = 16
+    static func scale(for dynamicTypeSize: DynamicTypeSize) -> CGFloat {
+        switch dynamicTypeSize {
+        case .xSmall, .small, .medium:
+            return 0.82
+        case .large:
+            return 1.0
+        case .xLarge, .xxLarge:
+            return 1.1
+        default:
+            return 1.2
+        }
+    }
+
+    static func gridSpacing(for scale: CGFloat) -> CGFloat {
+        max(6, 10 * scale)
+    }
+
+    static func compactHeight(for scale: CGFloat) -> CGFloat {
+        max(92, 124 * scale)
+    }
+
+    static func capsuleHeight(for scale: CGFloat) -> CGFloat {
+        max(44, 60 * scale)
+    }
+
+    static func tilePadding(for scale: CGFloat) -> CGFloat {
+        max(5, 8 * scale)
+    }
+
+    static func capsulePadding(for scale: CGFloat) -> CGFloat {
+        max(4, 6 * scale)
+    }
+
+    static func borderWidth(for scale: CGFloat) -> CGFloat {
+        max(0.8, 1.0 * scale)
+    }
+
+    static func cornerRadius(for scale: CGFloat) -> CGFloat {
+        max(4, 6 * scale)
+    }
+
+    static func missingStackedFontSize(for scale: CGFloat) -> CGFloat {
+        max(14, 19 * scale)
+    }
+
+    static func missingInlineFontSize(for scale: CGFloat) -> CGFloat {
+        max(12, 16 * scale)
+    }
 }
 
 private struct CategoryOverviewGrid<Destination: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let categories: [Core.Category]
     let totals: [UUID: Double]
     let style: CategoryDisplayStyle
     let destination: (Core.Category) -> Destination
+
+    private var metricScale: CGFloat {
+        TodayTileMetrics.scale(for: dynamicTypeSize)
+    }
+
     private var columns: [GridItem] {
         switch style {
         case .compactRings:
-            return [GridItem(.adaptive(minimum: 130), spacing: TodayTileMetrics.gridSpacing)]
+            return [GridItem(.adaptive(minimum: 130 * metricScale), spacing: TodayTileMetrics.gridSpacing(for: metricScale))]
         case .inlineLabel:
-            return [GridItem(.adaptive(minimum: 200), spacing: TodayTileMetrics.gridSpacing)]
+            return [GridItem(.adaptive(minimum: 200 * metricScale), spacing: TodayTileMetrics.gridSpacing(for: metricScale))]
         case .capsuleRows:
-            return [GridItem(.adaptive(minimum: 180), spacing: TodayTileMetrics.gridSpacing)]
+            return [GridItem(.adaptive(minimum: 180 * metricScale), spacing: TodayTileMetrics.gridSpacing(for: metricScale))]
         }
     }
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: TodayTileMetrics.gridSpacing) {
+        LazyVGrid(columns: columns, spacing: TodayTileMetrics.gridSpacing(for: metricScale)) {
             ForEach(categories) { category in
                 let total = totals[category.id] ?? 0
                 switch style {
@@ -977,11 +1468,16 @@ private struct MealDayEntryRow: View {
 }
 
 private struct CategoryRingTile: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let category: Core.Category
     let total: Double
     let targetMet: Bool
     private var accentColor: Color { CategoryColorPalette.color(for: category) }
     private var iconName: String { CategoryIconPalette.iconName(for: category) }
+
+    private var metricScale: CGFloat {
+        TodayTileMetrics.scale(for: dynamicTypeSize)
+    }
 
     var body: some View {
         let progress = CategoryProgress.make(category: category, total: total, targetMet: targetMet)
@@ -994,7 +1490,7 @@ private struct CategoryRingTile: View {
                     progress: progress.ringProgress,
                     accent: accentColor,
                     iconName: iconName,
-                    size: 40
+                    size: 40 * metricScale
                 )
                 Spacer()
                 StatusBadge(status: progress.status)
@@ -1008,11 +1504,16 @@ private struct CategoryRingTile: View {
                 MissingTargetValue(text: missingText, style: .stacked)
             }
         }
-        .padding(TodayTileMetrics.tilePadding)
-        .frame(maxWidth: .infinity, minHeight: TodayTileMetrics.compactHeight, maxHeight: TodayTileMetrics.compactHeight, alignment: .topLeading)
+        .padding(TodayTileMetrics.tilePadding(for: metricScale))
+        .frame(
+            maxWidth: .infinity,
+            minHeight: TodayTileMetrics.compactHeight(for: metricScale),
+            maxHeight: TodayTileMetrics.compactHeight(for: metricScale),
+            alignment: .topLeading
+        )
         .background(
-            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius, style: .continuous)
-                .stroke(Color(.systemGray5), lineWidth: TodayTileMetrics.borderWidth)
+            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius(for: metricScale), style: .continuous)
+                .stroke(Color(.systemGray5), lineWidth: TodayTileMetrics.borderWidth(for: metricScale))
         )
         .contextMenu {
             Text(category.name)
@@ -1029,11 +1530,16 @@ private struct CategoryRingTile: View {
 }
 
 private struct CategoryInlineTile: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let category: Core.Category
     let total: Double
     let targetMet: Bool
     private var accentColor: Color { CategoryColorPalette.color(for: category) }
     private var iconName: String { CategoryIconPalette.iconName(for: category) }
+
+    private var metricScale: CGFloat {
+        TodayTileMetrics.scale(for: dynamicTypeSize)
+    }
 
     var body: some View {
         let progress = CategoryProgress.make(category: category, total: total, targetMet: targetMet)
@@ -1041,7 +1547,7 @@ private struct CategoryInlineTile: View {
         let missingText = "\(missing.cleanNumber) \(category.unitName)"
         let showMissing = !targetMet && missing > 0
         HStack(spacing: 10) {
-            ProgressRing(progress: progress.ringProgress, accent: accentColor, iconName: iconName, size: 34)
+            ProgressRing(progress: progress.ringProgress, accent: accentColor, iconName: iconName, size: 34 * metricScale)
             VStack(alignment: .leading, spacing: 2) {
                 Text(category.name)
                     .font(.caption)
@@ -1053,11 +1559,16 @@ private struct CategoryInlineTile: View {
             Spacer()
             StatusBadge(status: progress.status)
         }
-        .padding(TodayTileMetrics.tilePadding)
-        .frame(maxWidth: .infinity, minHeight: TodayTileMetrics.compactHeight, maxHeight: TodayTileMetrics.compactHeight, alignment: .topLeading)
+        .padding(TodayTileMetrics.tilePadding(for: metricScale))
+        .frame(
+            maxWidth: .infinity,
+            minHeight: TodayTileMetrics.compactHeight(for: metricScale),
+            maxHeight: TodayTileMetrics.compactHeight(for: metricScale),
+            alignment: .topLeading
+        )
         .background(
-            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius, style: .continuous)
-                .stroke(Color(.systemGray5), lineWidth: TodayTileMetrics.borderWidth)
+            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius(for: metricScale), style: .continuous)
+                .stroke(Color(.systemGray5), lineWidth: TodayTileMetrics.borderWidth(for: metricScale))
         )
         .contextMenu {
             Text(category.name)
@@ -1074,11 +1585,16 @@ private struct CategoryInlineTile: View {
 }
 
 private struct CategoryCapsuleTile: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let category: Core.Category
     let total: Double
     let targetMet: Bool
     private var accentColor: Color { CategoryColorPalette.color(for: category) }
     private var iconName: String { CategoryIconPalette.iconName(for: category) }
+
+    private var metricScale: CGFloat {
+        TodayTileMetrics.scale(for: dynamicTypeSize)
+    }
 
     var body: some View {
         let progress = CategoryProgress.make(category: category, total: total, targetMet: targetMet)
@@ -1100,11 +1616,16 @@ private struct CategoryCapsuleTile: View {
             Spacer()
             StatusBadge(status: progress.status)
         }
-        .padding(.horizontal, TodayTileMetrics.tilePadding)
-        .padding(.vertical, TodayTileMetrics.capsulePadding)
-        .frame(maxWidth: .infinity, minHeight: TodayTileMetrics.capsuleHeight, maxHeight: TodayTileMetrics.capsuleHeight, alignment: .center)
+        .padding(.horizontal, TodayTileMetrics.tilePadding(for: metricScale))
+        .padding(.vertical, TodayTileMetrics.capsulePadding(for: metricScale))
+        .frame(
+            maxWidth: .infinity,
+            minHeight: TodayTileMetrics.capsuleHeight(for: metricScale),
+            maxHeight: TodayTileMetrics.capsuleHeight(for: metricScale),
+            alignment: .center
+        )
         .background(
-            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius, style: .continuous)
+            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius(for: metricScale), style: .continuous)
                 .fill(accentColor.opacity(0.12))
         )
         .contextMenu {
@@ -1127,8 +1648,13 @@ private enum MissingTargetStyle {
 }
 
 private struct MissingTargetValue: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let text: String
     let style: MissingTargetStyle
+
+    private var metricScale: CGFloat {
+        TodayTileMetrics.scale(for: dynamicTypeSize)
+    }
 
     var body: some View {
         switch style {
@@ -1138,7 +1664,7 @@ private struct MissingTargetValue: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(text)
-                    .font(.system(size: TodayTileMetrics.missingStackedFontSize, weight: .semibold))
+                    .font(.system(size: TodayTileMetrics.missingStackedFontSize(for: metricScale), weight: .semibold))
                     .foregroundStyle(.red)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -1149,7 +1675,7 @@ private struct MissingTargetValue: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(text)
-                    .font(.system(size: TodayTileMetrics.missingInlineFontSize, weight: .semibold))
+                    .font(.system(size: TodayTileMetrics.missingInlineFontSize(for: metricScale), weight: .semibold))
                     .foregroundStyle(.red)
             }
             .lineLimit(1)
@@ -1170,6 +1696,19 @@ private func missingAmount(rule: TargetRule, total: Double) -> Double {
         if total < minValue { return Swift.max(0, minValue - total) }
         if total > maxValue { return 0 }
         return 0
+    }
+}
+
+private func excessAmount(rule: TargetRule, total: Double) -> Double {
+    switch rule {
+    case .exact(let target):
+        return max(0, total - (target + TargetRule.exactTolerance))
+    case .atLeast:
+        return 0
+    case .atMost(let target):
+        return max(0, total - target)
+    case .range(_, let maxValue):
+        return max(0, total - maxValue)
     }
 }
 
@@ -1203,14 +1742,22 @@ private struct TodayMealBreakdownView: View {
 }
 
 private struct MealOverviewGrid: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let mealSlots: [MealSlot]
     let entries: [DailyLogEntry]
     let categories: [Core.Category]
-    private let columns = [GridItem(.adaptive(minimum: 130), spacing: TodayTileMetrics.gridSpacing)]
+
+    private var metricScale: CGFloat {
+        TodayTileMetrics.scale(for: dynamicTypeSize)
+    }
+
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: 130 * metricScale), spacing: TodayTileMetrics.gridSpacing(for: metricScale))]
+    }
 
     var body: some View {
         let enabledCategories = categories.filter { $0.isEnabled }
-        LazyVGrid(columns: columns, spacing: TodayTileMetrics.gridSpacing) {
+        LazyVGrid(columns: columns, spacing: TodayTileMetrics.gridSpacing(for: metricScale)) {
             ForEach(mealSlots) { slot in
                 let slotEntries = entries.filter { $0.mealSlotID == slot.id }
                 let total = slotEntries.reduce(0) { $0 + $1.portion.value }
@@ -1232,11 +1779,16 @@ private struct MealOverviewGrid: View {
 }
 
 private struct MealOverviewCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let mealSlot: MealSlot
     let total: Double
     let loggedCategories: Int
     let totalCategories: Int
     private var iconName: String { MealIconPalette.iconName(for: mealSlot) }
+
+    private var metricScale: CGFloat {
+        TodayTileMetrics.scale(for: dynamicTypeSize)
+    }
 
     var body: some View {
         let progress = totalCategories > 0 ? Double(loggedCategories) / Double(totalCategories) : 0
@@ -1246,7 +1798,7 @@ private struct MealOverviewCard: View {
                     progress: progress,
                     accent: .blue,
                     iconName: iconName,
-                    size: 40
+                    size: 40 * metricScale
                 )
                 Spacer()
             }
@@ -1259,11 +1811,16 @@ private struct MealOverviewCard: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(TodayTileMetrics.tilePadding)
-        .frame(maxWidth: .infinity, minHeight: TodayTileMetrics.compactHeight, maxHeight: TodayTileMetrics.compactHeight, alignment: .topLeading)
+        .padding(TodayTileMetrics.tilePadding(for: metricScale))
+        .frame(
+            maxWidth: .infinity,
+            minHeight: TodayTileMetrics.compactHeight(for: metricScale),
+            maxHeight: TodayTileMetrics.compactHeight(for: metricScale),
+            alignment: .topLeading
+        )
         .background(
-            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius, style: .continuous)
-                .stroke(Color(.systemGray5), lineWidth: TodayTileMetrics.borderWidth)
+            RoundedRectangle(cornerRadius: TodayTileMetrics.cornerRadius(for: metricScale), style: .continuous)
+                .stroke(Color(.systemGray5), lineWidth: TodayTileMetrics.borderWidth(for: metricScale))
         )
         .contextMenu {
             Text(mealSlot.name)
@@ -2396,7 +2953,7 @@ struct QuickAddSheet: View {
 
     private func roundedAmountValue(_ value: Double) -> Double {
         if isDrinkCategory {
-            let symbol = activeUnit?.symbol?.lowercased()
+            let symbol = activeUnit?.symbol.lowercased()
             if symbol == "ml" {
                 return value.rounded()
             }
@@ -3044,7 +3601,7 @@ struct EntryEditSheet: View {
 
     private func roundedAmountValue(_ value: Double) -> Double {
         if isDrinkCategory {
-            let symbol = activeUnit?.symbol?.lowercased()
+            let symbol = activeUnit?.symbol.lowercased()
             if symbol == "ml" {
                 return value.rounded()
             }
@@ -3120,10 +3677,16 @@ struct EntryEditSheet: View {
 private struct PortionWheelControl: View {
     @Binding var portion: Double
     let accentColor: Color
-    let increment: Double = Portion.defaultIncrement
+    let step: Double
+
+    init(portion: Binding<Double>, accentColor: Color, increment: Double = Portion.defaultIncrement) {
+        self._portion = portion
+        self.accentColor = accentColor
+        self.step = increment
+    }
 
     private var values: [Double] {
-        let safeIncrement = max(increment, Portion.drinkIncrement)
+        let safeIncrement = max(step, Portion.drinkIncrement)
         let steps = Int(6.0 / safeIncrement)
         return (0...steps).map { Portion.roundToIncrement(Double($0) * safeIncrement, increment: safeIncrement) }
     }
@@ -3137,7 +3700,7 @@ private struct PortionWheelControl: View {
                     .padding(6)
             }
             .glassButton(.icon)
-            .accessibilityLabel("Decrease by \(increment.cleanNumber) portion")
+            .accessibilityLabel("Decrease by \(step.cleanNumber) portion")
 
             Picker("Portions", selection: $portion) {
                 ForEach(values, id: \.self) { value in
@@ -3150,25 +3713,25 @@ private struct PortionWheelControl: View {
             .clipped()
             .accessibilityLabel("Portion picker")
 
-            Button(action: increment) {
+            Button(action: increase) {
                 Image(systemName: "plus.circle.fill")
                     .font(.title2)
                     .foregroundStyle(.green)
                     .padding(6)
             }
             .glassButton(.icon)
-            .accessibilityLabel("Increase by \(increment.cleanNumber) portion")
+            .accessibilityLabel("Increase by \(step.cleanNumber) portion")
         }
     }
 
     private func decrement() {
-        let next = max(0.0, portion - increment)
-        portion = Self.roundedToIncrement(next, increment: increment)
+        let next = max(0.0, portion - step)
+        portion = Self.roundedToIncrement(next, increment: step)
     }
 
-    private func increment() {
-        let next = min(6.0, portion + increment)
-        portion = Self.roundedToIncrement(next, increment: increment)
+    private func increase() {
+        let next = min(6.0, portion + step)
+        portion = Self.roundedToIncrement(next, increment: step)
     }
 
     static func roundedToIncrement(_ value: Double, increment: Double = Portion.defaultIncrement) -> Double {

@@ -7,6 +7,8 @@ struct SettingsView: View {
     @EnvironmentObject private var healthSyncManager: HealthSyncManager
     @State private var cutoffTime = Date()
     @State private var showingAddMeeting = false
+    @State private var meetingToEdit: Core.CareMeeting?
+    @State private var meetingsPendingDeletion: [Core.CareMeeting] = []
     @State private var backupNote = ""
 
     var body: some View {
@@ -33,6 +35,25 @@ struct SettingsView: View {
                     )
                 )
                 Text("Show the logo and version for 2 seconds when the app starts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker(
+                    "Font size",
+                    selection: Binding(
+                        get: { store.settings.fontSize },
+                        set: { newValue in
+                            updateSettingsValue { $0.fontSize = newValue }
+                        }
+                    )
+                ) {
+                    ForEach(Core.AppFontSize.allCases, id: \.self) { size in
+                        Text(size.label).tag(size)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text("Small fits more content on screen.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -143,13 +164,18 @@ struct SettingsView: View {
                 } else {
                     ForEach(store.careMeetings) { meeting in
                         CareMeetingRow(meeting: meeting)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                meetingToEdit = meeting
+                            }
                     }
                     .onDelete { indices in
-                        for index in indices {
-                            guard index < store.careMeetings.count else { continue }
-                            let meeting = store.careMeetings[index]
-                            Task { await store.deleteCareMeeting(meeting) }
+                        let selectedMeetings: [Core.CareMeeting] = indices.compactMap { index in
+                            guard index < store.careMeetings.count else { return nil }
+                            return store.careMeetings[index]
                         }
+                        guard !selectedMeetings.isEmpty else { return }
+                        meetingsPendingDeletion = selectedMeetings
                     }
                 }
 
@@ -173,6 +199,41 @@ struct SettingsView: View {
         .sheet(isPresented: $showingAddMeeting) {
             CareMeetingSheet { meeting in
                 Task { await store.saveCareMeeting(meeting) }
+            }
+        }
+        .sheet(item: $meetingToEdit) { meeting in
+            CareMeetingSheet(existingMeeting: meeting) { updatedMeeting in
+                Task { await store.saveCareMeeting(updatedMeeting) }
+            }
+        }
+        .alert(
+            meetingsPendingDeletion.count > 1 ? "Delete Meetings?" : "Delete Meeting?",
+            isPresented: Binding(
+                get: { !meetingsPendingDeletion.isEmpty },
+                set: { isPresented in
+                    if !isPresented {
+                        meetingsPendingDeletion = []
+                    }
+                }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                let pendingMeetings = meetingsPendingDeletion
+                meetingsPendingDeletion = []
+                Task {
+                    for meeting in pendingMeetings {
+                        await store.deleteCareMeeting(meeting)
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                meetingsPendingDeletion = []
+            }
+        } message: {
+            if meetingsPendingDeletion.count > 1 {
+                Text("Delete \(meetingsPendingDeletion.count) meetings? This action cannot be undone.")
+            } else {
+                Text("Delete this meeting? This action cannot be undone.")
             }
         }
     }
@@ -205,14 +266,28 @@ struct SettingsView: View {
 }
 
 private struct CareMeetingRow: View {
+    @EnvironmentObject private var store: AppStore
     let meeting: Core.CareMeeting
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(meeting.date, style: .date)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: meeting.providerType.symbolName)
+                    .font(.body.weight(.semibold))
+                    .frame(width: 20)
+                    .foregroundStyle(providerTint)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(providerName)
+                        .font(.subheadline.weight(.semibold))
+                    Text(meeting.providerType.label)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Spacer()
-                Text(meeting.providerType.label)
+
+                Text(meeting.date, style: .date)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -221,18 +296,52 @@ private struct CareMeetingRow: View {
                 .foregroundStyle(.secondary)
         }
     }
+
+    private var providerName: String {
+        let rawName: String?
+        switch meeting.providerType {
+        case .doctor:
+            rawName = store.settings.doctorName
+        case .nutritionist:
+            rawName = store.settings.nutritionistName
+        }
+        let trimmed = rawName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Name not set" : trimmed
+    }
+
+    private var providerTint: Color {
+        switch meeting.providerType {
+        case .doctor:
+            return .blue
+        case .nutritionist:
+            return .green
+        }
+    }
 }
 
 private struct CareMeetingSheet: View {
+    let existingMeeting: Core.CareMeeting?
     let onSave: (Core.CareMeeting) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var date = Date()
-    @State private var providerType: Core.CareProviderType = .doctor
-    @State private var notes = ""
+    @State private var date: Date
+    @State private var providerType: Core.CareProviderType
+    @State private var notes: String
 
     private var trimmedNotes: String {
         notes.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isEditing: Bool {
+        existingMeeting != nil
+    }
+
+    init(existingMeeting: Core.CareMeeting? = nil, onSave: @escaping (Core.CareMeeting) -> Void) {
+        self.existingMeeting = existingMeeting
+        self.onSave = onSave
+        _date = State(initialValue: existingMeeting?.date ?? Date())
+        _providerType = State(initialValue: existingMeeting?.providerType ?? .doctor)
+        _notes = State(initialValue: existingMeeting?.notes ?? "")
     }
 
     var body: some View {
@@ -241,7 +350,7 @@ private struct CareMeetingSheet: View {
                 DatePicker("Date", selection: $date, displayedComponents: .date)
                 Picker("Provider", selection: $providerType) {
                     ForEach(Core.CareProviderType.allCases, id: \.self) { provider in
-                        Text(provider.label).tag(provider)
+                        Label(provider.label, systemImage: provider.symbolName).tag(provider)
                     }
                 }
                 Section("Notes") {
@@ -250,7 +359,7 @@ private struct CareMeetingSheet: View {
                         .textInputAutocapitalization(.sentences)
                 }
             }
-            .navigationTitle("Add Meeting")
+            .navigationTitle(isEditing ? "Edit Meeting" : "Add Meeting")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -260,6 +369,7 @@ private struct CareMeetingSheet: View {
                     Button("Save") {
                         onSave(
                             Core.CareMeeting(
+                                id: existingMeeting?.id ?? UUID(),
                                 date: date,
                                 providerType: providerType,
                                 notes: trimmedNotes

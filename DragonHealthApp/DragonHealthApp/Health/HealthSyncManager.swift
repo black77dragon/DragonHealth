@@ -40,10 +40,8 @@ final class HealthSyncManager: ObservableObject {
         Task {
             let outcome = await worker.sync(allowAuthorization: allowAuthorization)
             let status = await worker.loadStatus()
-            await MainActor.run {
-                apply(status)
-                isSyncing = false
-            }
+            apply(status)
+            isSyncing = false
             if outcome.performed, outcome.success {
                 await store.reload()
             } else if let message = outcome.errorMessage {

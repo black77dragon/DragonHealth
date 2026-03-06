@@ -76,7 +76,10 @@ struct MealTimingSettingsView: View {
                             .font(.subheadline)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .background(.thinMaterial, in: Capsule())
+                            .background(
+                                Capsule()
+                                    .fill(Color(.secondarySystemBackground))
+                            )
                     }
                 }
 

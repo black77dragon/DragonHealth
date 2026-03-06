@@ -405,6 +405,7 @@ public actor SQLiteDatabase: DBGateway {
                food_seed_version,
                show_launch_splash,
                appearance_mode,
+               font_size_mode,
                meal_timing_json
         FROM app_settings
         WHERE id = 1;
@@ -415,10 +416,12 @@ public actor SQLiteDatabase: DBGateway {
             let minutes = Int(sqlite3_column_int(statement, 0))
             let appearanceRaw = readOptionalText(statement, index: 10)
             let appearance = Core.AppAppearance(rawValue: appearanceRaw ?? "") ?? .system
+            let fontSizeRaw = readOptionalText(statement, index: 11)
+            let fontSize = Core.AppFontSize(rawValue: fontSizeRaw ?? "") ?? .standard
             let targetWeightDate = readOptionalDouble(statement, index: 4).map {
                 Date(timeIntervalSince1970: $0)
             }
-            let mealTimingJSON = readOptionalText(statement, index: 11)
+            let mealTimingJSON = readOptionalText(statement, index: 12)
             let mealSlotTimings = decodeMealSlotTimings(from: mealTimingJSON)
             return Core.AppSettings(
                 dayCutoffMinutes: minutes,
@@ -432,6 +435,7 @@ public actor SQLiteDatabase: DBGateway {
                 foodSeedVersion: Int(sqlite3_column_int(statement, 8)),
                 showLaunchSplash: sqlite3_column_int(statement, 9) != 0,
                 appearance: appearance,
+                fontSize: fontSize,
                 mealSlotTimings: mealSlotTimings
             )
         }
@@ -453,9 +457,10 @@ public actor SQLiteDatabase: DBGateway {
             food_seed_version,
             show_launch_splash,
             appearance_mode,
+            font_size_mode,
             meal_timing_json
         )
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             day_cutoff_minutes = excluded.day_cutoff_minutes,
             profile_image_path = excluded.profile_image_path,
@@ -468,6 +473,7 @@ public actor SQLiteDatabase: DBGateway {
             food_seed_version = excluded.food_seed_version,
             show_launch_splash = excluded.show_launch_splash,
             appearance_mode = excluded.appearance_mode,
+            font_size_mode = excluded.font_size_mode,
             meal_timing_json = excluded.meal_timing_json;
         """
         let statement = try prepare(sql)
@@ -483,7 +489,8 @@ public actor SQLiteDatabase: DBGateway {
         bindInt(statement, index: 9, value: settings.foodSeedVersion)
         bindInt(statement, index: 10, value: settings.showLaunchSplash ? 1 : 0)
         bindText(statement, index: 11, value: settings.appearance.rawValue)
-        bindText(statement, index: 12, value: encodeMealSlotTimings(settings.mealSlotTimings))
+        bindText(statement, index: 12, value: settings.fontSize.rawValue)
+        bindText(statement, index: 13, value: encodeMealSlotTimings(settings.mealSlotTimings))
         try step(statement)
     }
 
@@ -1009,6 +1016,7 @@ public actor SQLiteDatabase: DBGateway {
             food_seed_version INTEGER NOT NULL DEFAULT 0,
             show_launch_splash INTEGER NOT NULL DEFAULT 1,
             appearance_mode TEXT NOT NULL DEFAULT 'system',
+            font_size_mode TEXT NOT NULL DEFAULT 'standard',
             meal_timing_json TEXT NOT NULL DEFAULT '[]'
         );
         """, db: db)
@@ -1150,6 +1158,7 @@ public actor SQLiteDatabase: DBGateway {
                 "food_seed_version": "INTEGER NOT NULL DEFAULT 0",
                 "show_launch_splash": "INTEGER NOT NULL DEFAULT 1",
                 "appearance_mode": "TEXT NOT NULL DEFAULT 'system'",
+                "font_size_mode": "TEXT NOT NULL DEFAULT 'standard'",
                 "meal_timing_json": "TEXT NOT NULL DEFAULT '[]'"
             ],
             db: db

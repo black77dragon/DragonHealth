@@ -24,6 +24,12 @@ struct ManageView: View {
                 } label: {
                     Label("Meeting Log", systemImage: "list.bullet.rectangle")
                 }
+
+                NavigationLink {
+                    CareTeamBriefView()
+                } label: {
+                    Label("Care Team Brief", systemImage: "doc.text.magnifyingglass")
+                }
             }
 
             Section("Plan & Meals") {
@@ -602,17 +608,32 @@ struct CareTeamSettingsView: View {
     var body: some View {
         Form {
             Section("Providers") {
-                TextField("Doctor Name", text: $doctorName)
-                    .textInputAutocapitalization(.words)
-                    .onChange(of: doctorName) { _, newValue in
-                        updateSettingsValue { $0.doctorName = normalizedText(newValue) }
-                    }
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(Core.CareProviderType.doctor.label, systemImage: Core.CareProviderType.doctor.symbolName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Doctor Name", text: $doctorName)
+                        .textInputAutocapitalization(.words)
+                        .onChange(of: doctorName) { _, newValue in
+                            updateSettingsValue { $0.doctorName = normalizedText(newValue) }
+                        }
+                }
 
-                TextField("Nutrition Specialist", text: $nutritionistName)
-                    .textInputAutocapitalization(.words)
-                    .onChange(of: nutritionistName) { _, newValue in
-                        updateSettingsValue { $0.nutritionistName = normalizedText(newValue) }
-                    }
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(Core.CareProviderType.nutritionist.label, systemImage: Core.CareProviderType.nutritionist.symbolName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Nutrition Specialist", text: $nutritionistName)
+                        .textInputAutocapitalization(.words)
+                        .onChange(of: nutritionistName) { _, newValue in
+                            updateSettingsValue { $0.nutritionistName = normalizedText(newValue) }
+                        }
+                }
+            }
+
+            Section("Current Team") {
+                providerSummaryRow(providerType: .doctor, name: doctorName)
+                providerSummaryRow(providerType: .nutritionist, name: nutritionistName)
             }
         }
         .navigationTitle("Care Team")
@@ -634,6 +655,38 @@ struct CareTeamSettingsView: View {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    @ViewBuilder
+    private func providerSummaryRow(providerType: Core.CareProviderType, name: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: providerType.symbolName)
+                .font(.body.weight(.semibold))
+                .frame(width: 20)
+                .foregroundStyle(providerTint(for: providerType))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayName(name))
+                    .font(.subheadline.weight(.semibold))
+                Text(providerType.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func displayName(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Name not set" : trimmed
+    }
+
+    private func providerTint(for providerType: Core.CareProviderType) -> Color {
+        switch providerType {
+        case .doctor:
+            return .blue
+        case .nutritionist:
+            return .green
+        }
+    }
+
     private func updateSettingsValue(_ update: (inout Core.AppSettings) -> Void) {
         var updated = store.settings
         update(&updated)
@@ -645,6 +698,8 @@ struct CareTeamSettingsView: View {
 struct CareTeamLogView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingAddMeeting = false
+    @State private var meetingToEdit: Core.CareMeeting?
+    @State private var meetingsPendingDeletion: [Core.CareMeeting] = []
 
     var body: some View {
         Form {
@@ -656,13 +711,18 @@ struct CareTeamLogView: View {
                 } else {
                     ForEach(store.careMeetings) { meeting in
                         CareMeetingRow(meeting: meeting)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                meetingToEdit = meeting
+                            }
                     }
                     .onDelete { indices in
-                        for index in indices {
-                            guard index < store.careMeetings.count else { continue }
-                            let meeting = store.careMeetings[index]
-                            Task { await store.deleteCareMeeting(meeting) }
+                        let selectedMeetings: [Core.CareMeeting] = indices.compactMap { index in
+                            guard index < store.careMeetings.count else { return nil }
+                            return store.careMeetings[index]
                         }
+                        guard !selectedMeetings.isEmpty else { return }
+                        meetingsPendingDeletion = selectedMeetings
                     }
                 }
 
@@ -680,6 +740,414 @@ struct CareTeamLogView: View {
                 Task { await store.saveCareMeeting(meeting) }
             }
         }
+        .sheet(item: $meetingToEdit) { meeting in
+            CareMeetingSheet(existingMeeting: meeting) { updatedMeeting in
+                Task { await store.saveCareMeeting(updatedMeeting) }
+            }
+        }
+        .alert(
+            meetingsPendingDeletion.count > 1 ? "Delete Meetings?" : "Delete Meeting?",
+            isPresented: Binding(
+                get: { !meetingsPendingDeletion.isEmpty },
+                set: { isPresented in
+                    if !isPresented {
+                        meetingsPendingDeletion = []
+                    }
+                }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                let pendingMeetings = meetingsPendingDeletion
+                meetingsPendingDeletion = []
+                Task {
+                    for meeting in pendingMeetings {
+                        await store.deleteCareMeeting(meeting)
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                meetingsPendingDeletion = []
+            }
+        } message: {
+            if meetingsPendingDeletion.count > 1 {
+                Text("Delete \(meetingsPendingDeletion.count) meetings? This action cannot be undone.")
+            } else {
+                Text("Delete this meeting? This action cannot be undone.")
+            }
+        }
+    }
+}
+
+private struct CareTeamBriefView: View {
+    @EnvironmentObject private var store: AppStore
+    @State private var selectedRange: CareBriefRange = .fourWeeks
+    @State private var generatedBrief: CareTeamBrief?
+    @State private var isGenerating = false
+    @State private var showingShareSheet = false
+    @State private var shareItems: [Any] = []
+    @State private var statusMessage: String?
+    @State private var errorMessage: String?
+    @State private var showingError = false
+
+    private let totalsCalculator = DailyTotalsCalculator()
+    private let evaluator = DailyTotalEvaluator()
+    private let scoreEvaluator = DailyScoreEvaluator()
+
+    var body: some View {
+        Form {
+            Section("Range") {
+                Picker("Time Window", selection: $selectedRange) {
+                    ForEach(CareBriefRange.allCases) { range in
+                        Text(range.shortLabel).tag(range)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text("Generates a plain-language one-page brief for care team visits.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Brief") {
+                if isGenerating {
+                    ProgressView("Generating brief...")
+                } else if let generatedBrief {
+                    Text(generatedBrief.body)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                } else {
+                    Text("No brief yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Actions") {
+                Button("Refresh Brief") {
+                    Task { await generateBrief() }
+                }
+                .glassButton(.text)
+                .disabled(isGenerating)
+
+                Button("Copy Brief Text") {
+                    guard let generatedBrief else { return }
+                    UIPasteboard.general.string = generatedBrief.body
+                    statusMessage = "Brief copied."
+                }
+                .glassButton(.text)
+                .disabled(generatedBrief == nil || isGenerating)
+
+                Button("Share Brief") {
+                    guard let generatedBrief else { return }
+                    shareItems = [generatedBrief.body]
+                    showingShareSheet = true
+                }
+                .glassButton(.text)
+                .disabled(generatedBrief == nil || isGenerating)
+
+                Button("Save to Documents (PDF)") {
+                    Task { await saveBriefToDocuments() }
+                }
+                .glassButton(.text)
+                .disabled(generatedBrief == nil || isGenerating)
+            }
+
+            if let statusMessage {
+                Section {
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Care Team Brief")
+        .sheet(isPresented: $showingShareSheet) {
+            ActivityShareSheet(activityItems: shareItems)
+        }
+        .alert("Unable to Complete Action", isPresented: $showingError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "Unknown error")
+        }
+        .task(id: selectedRange) {
+            await generateBrief()
+        }
+    }
+
+    private func generateBrief() async {
+        await MainActor.run {
+            isGenerating = true
+            statusMessage = nil
+        }
+
+        let calendar = store.appCalendar
+        let endDay = store.currentDay
+        guard let startDay = calendar.date(byAdding: .day, value: -(selectedRange.days - 1), to: endDay) else {
+            await MainActor.run {
+                generatedBrief = nil
+                isGenerating = false
+            }
+            return
+        }
+
+        let enabledCategories = store.categories.filter { $0.isEnabled }
+        var metCounts: [UUID: Int] = [:]
+        var missCounts: [UUID: Int] = [:]
+        var scoreValues: [Double] = []
+        var fullyOnTargetDays = 0
+
+        for offset in 0..<selectedRange.days {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: startDay) else { continue }
+            let reference = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+            let log = await store.fetchDailyLog(for: reference)
+            let entries = log?.entries ?? []
+            let totalsByCategory = totalsCalculator.totalsByCategory(entries: entries)
+            let adherence = evaluator.evaluate(categories: store.categories, totalsByCategoryID: totalsByCategory)
+            if adherence.allTargetsMet {
+                fullyOnTargetDays += 1
+            }
+            for result in adherence.categoryResults {
+                if result.targetMet {
+                    metCounts[result.categoryID, default: 0] += 1
+                } else {
+                    missCounts[result.categoryID, default: 0] += 1
+                }
+            }
+            let score = scoreEvaluator.evaluate(
+                categories: store.categories,
+                totalsByCategoryID: totalsByCategory,
+                profilesByCategoryID: store.scoreProfiles,
+                compensationRules: store.compensationRules
+            )
+            scoreValues.append(score.overallScore)
+        }
+
+        let scoreAverage = scoreValues.isEmpty ? nil : scoreValues.reduce(0, +) / Double(scoreValues.count)
+        let scoreStart = scoreValues.first
+        let scoreEnd = scoreValues.last
+        let scoreDelta = (scoreStart != nil && scoreEnd != nil) ? (scoreEnd! - scoreStart!) : nil
+
+        let topMisses = enabledCategories
+            .map { ($0, missCounts[$0.id, default: 0]) }
+            .filter { $0.1 > 0 }
+            .sorted { lhs, rhs in
+                if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+                return lhs.0.sortOrder < rhs.0.sortOrder
+            }
+            .prefix(3)
+
+        let topWins = enabledCategories
+            .map { ($0, metCounts[$0.id, default: 0]) }
+            .filter { $0.1 > 0 }
+            .sorted { lhs, rhs in
+                if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+                return lhs.0.sortOrder < rhs.0.sortOrder
+            }
+            .prefix(3)
+
+        let metricsInRange = store.bodyMetrics
+            .filter { $0.date >= startDay && $0.date <= endDay }
+            .sorted(by: { $0.date < $1.date })
+        let weightTrendText = weightTrend(metricsInRange: metricsInRange)
+        let stepTrendText = stepTrend(metricsInRange: metricsInRange)
+        let meetingsInRange = store.careMeetings.filter { $0.date >= startDay && $0.date <= endDay }.count
+
+        let providerNames = [
+            store.settings.doctorName.map { "Doctor: \($0)" },
+            store.settings.nutritionistName.map { "Nutrition Specialist: \($0)" }
+        ].compactMap { $0 }.joined(separator: " | ")
+
+        let questions = buildDiscussionQuestions(topMisses: Array(topMisses), scoreDelta: scoreDelta, meetingsInRange: meetingsInRange)
+        let periodText = "\(formattedDate(startDay, calendar: calendar)) to \(formattedDate(endDay, calendar: calendar))"
+        let scoreTrajectoryText = scoreTrajectoryLine(start: scoreStart, end: scoreEnd, delta: scoreDelta, average: scoreAverage)
+
+        let lines = [
+            "DragonHealth Care Team Brief",
+            "Generated: \(formattedDate(Date(), calendar: calendar))",
+            "Period: \(periodText)",
+            providerNames.isEmpty ? "Care Team: not listed" : "Care Team: \(providerNames)",
+            "",
+            "Trend highlights",
+            "- \(weightTrendText)",
+            "- \(stepTrendText)",
+            "- Logged meetings in this period: \(meetingsInRange)",
+            "",
+            "Adherence and score trajectory",
+            "- Days fully on target: \(fullyOnTargetDays)/\(selectedRange.days)",
+            "- \(scoreTrajectoryText)",
+            "",
+            "Persistent misses",
+            topMisses.isEmpty ? "- No persistent misses detected." : topMisses.map { "- \($0.0.name): missed \($0.1)/\(selectedRange.days) days" }.joined(separator: "\n"),
+            "",
+            "Top wins",
+            topWins.isEmpty ? "- No consistent wins recorded yet." : topWins.map { "- \($0.0.name): met \($0.1)/\(selectedRange.days) days" }.joined(separator: "\n"),
+            "",
+            "Suggested discussion questions",
+            questions.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        ]
+
+        await MainActor.run {
+            generatedBrief = CareTeamBrief(
+                title: "Care Team Brief \(formattedDate(Date(), calendar: calendar))",
+                body: lines.joined(separator: "\n")
+            )
+            isGenerating = false
+        }
+    }
+
+    private func saveBriefToDocuments() async {
+        guard let generatedBrief else { return }
+        do {
+            let temporaryURL = try renderBriefPDF(title: generatedBrief.title, body: generatedBrief.body)
+            defer { try? FileManager.default.removeItem(at: temporaryURL) }
+            let imported = try DocumentStorage.importDocument(from: temporaryURL)
+            let document = Core.HealthDocument(
+                title: generatedBrief.title,
+                fileName: imported.fileName,
+                fileType: imported.fileType,
+                createdAt: Date()
+            )
+            await store.saveDocument(document)
+            await MainActor.run {
+                statusMessage = "Saved to Document Library."
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                showingError = true
+            }
+        }
+    }
+
+    private func renderBriefPDF(title: String, body: String) throws -> URL {
+        let fileName = "care-team-brief-\(UUID().uuidString).pdf"
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        try renderer.writePDF(to: fileURL) { context in
+            context.beginPage()
+
+            let titleAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 18)
+            ]
+            let bodyAttributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 12)
+            ]
+
+            let titleRect = CGRect(x: 32, y: 28, width: pageRect.width - 64, height: 24)
+            NSString(string: title).draw(in: titleRect, withAttributes: titleAttributes)
+
+            let bodyRect = CGRect(x: 32, y: 60, width: pageRect.width - 64, height: pageRect.height - 92)
+            NSString(string: body).draw(in: bodyRect, withAttributes: bodyAttributes)
+        }
+        return fileURL
+    }
+
+    private func scoreTrajectoryLine(start: Double?, end: Double?, delta: Double?, average: Double?) -> String {
+        let startText = start.map { Int($0.rounded()) } ?? 0
+        let endText = end.map { Int($0.rounded()) } ?? 0
+        let avgText = average.map { Int($0.rounded()) } ?? 0
+        if let delta {
+            let deltaText = delta >= 0 ? "+\(delta.cleanNumber)" : delta.cleanNumber
+            return "Score moved from \(startText) to \(endText) (\(deltaText)), average \(avgText)."
+        }
+        return "Score data is limited for this window."
+    }
+
+    private func weightTrend(metricsInRange: [Core.BodyMetricEntry]) -> String {
+        let weights = metricsInRange.compactMap { entry -> (Date, Double)? in
+            guard let weight = entry.weightKg else { return nil }
+            return (entry.date, weight)
+        }
+        guard let first = weights.first, let last = weights.last else {
+            return "No weight trend available in this period."
+        }
+        let delta = last.1 - first.1
+        let direction = delta < 0 ? "decrease" : (delta > 0 ? "increase" : "no change")
+        return "Weight \(direction): \(first.1.cleanNumber) kg to \(last.1.cleanNumber) kg (\(delta.cleanNumber) kg)."
+    }
+
+    private func stepTrend(metricsInRange: [Core.BodyMetricEntry]) -> String {
+        let steps = metricsInRange.compactMap(\.steps)
+        guard !steps.isEmpty else {
+            return "No step trend available in this period."
+        }
+        let average = steps.reduce(0, +) / Double(steps.count)
+        return "Average daily steps: \(Int(average.rounded()))."
+    }
+
+    private func buildDiscussionQuestions(
+        topMisses: [(Core.Category, Int)],
+        scoreDelta: Double?,
+        meetingsInRange: Int
+    ) -> [String] {
+        var questions: [String] = []
+        if let leadingMiss = topMisses.first {
+            questions.append("What barrier most often led to missing \(leadingMiss.0.name.lowercased()) this period?")
+        }
+        if let scoreDelta {
+            if scoreDelta < 0 {
+                questions.append("Which daily routine change most likely contributed to the score decline?")
+            } else {
+                questions.append("Which recent habit drove the score improvement and can be formalized?")
+            }
+        } else {
+            questions.append("Which one behavior should be prioritized to stabilize next week's score?")
+        }
+        if meetingsInRange == 0 {
+            questions.append("Should we schedule a check-in cadence for the next month?")
+        } else {
+            questions.append("Which action from prior meetings should be reviewed for measurable progress?")
+        }
+        return Array(questions.prefix(3))
+    }
+
+    private func formattedDate(_ date: Date, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = calendar.locale ?? .current
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter.string(from: date)
+    }
+}
+
+private struct CareTeamBrief {
+    let title: String
+    let body: String
+}
+
+private enum CareBriefRange: String, CaseIterable, Identifiable {
+    case twoWeeks
+    case fourWeeks
+    case eightWeeks
+
+    var id: String { rawValue }
+
+    var days: Int {
+        switch self {
+        case .twoWeeks: return 14
+        case .fourWeeks: return 28
+        case .eightWeeks: return 56
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .twoWeeks: return "2W"
+        case .fourWeeks: return "4W"
+        case .eightWeeks: return "8W"
+        }
+    }
+}
+
+private struct ActivityShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    var applicationActivities: [UIActivity]? = nil
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
     }
 }
 
@@ -1129,6 +1597,27 @@ struct AboutView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Display") {
+                Picker(
+                    "Font size",
+                    selection: Binding(
+                        get: { store.settings.fontSize },
+                        set: { newValue in
+                            updateSettingsValue { $0.fontSize = newValue }
+                        }
+                    )
+                ) {
+                    ForEach(Core.AppFontSize.allCases, id: \.self) { size in
+                        Text(size.label).tag(size)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text("Small fits more content on screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Launch Screen") {
                 Toggle(
                     "Show launch screen",
@@ -1204,14 +1693,28 @@ private struct ProfileImageView: View {
 }
 
 private struct CareMeetingRow: View {
+    @EnvironmentObject private var store: AppStore
     let meeting: Core.CareMeeting
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(meeting.date, style: .date)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: meeting.providerType.symbolName)
+                    .font(.body.weight(.semibold))
+                    .frame(width: 20)
+                    .foregroundStyle(providerTint)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(providerName)
+                        .font(.subheadline.weight(.semibold))
+                    Text(meeting.providerType.label)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Spacer()
-                Text(meeting.providerType.label)
+
+                Text(meeting.date, style: .date)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1220,18 +1723,52 @@ private struct CareMeetingRow: View {
                 .foregroundStyle(.secondary)
         }
     }
+
+    private var providerName: String {
+        let rawName: String?
+        switch meeting.providerType {
+        case .doctor:
+            rawName = store.settings.doctorName
+        case .nutritionist:
+            rawName = store.settings.nutritionistName
+        }
+        let trimmed = rawName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Name not set" : trimmed
+    }
+
+    private var providerTint: Color {
+        switch meeting.providerType {
+        case .doctor:
+            return .blue
+        case .nutritionist:
+            return .green
+        }
+    }
 }
 
 private struct CareMeetingSheet: View {
+    let existingMeeting: Core.CareMeeting?
     let onSave: (Core.CareMeeting) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var date = Date()
-    @State private var providerType: Core.CareProviderType = .doctor
-    @State private var notes = ""
+    @State private var date: Date
+    @State private var providerType: Core.CareProviderType
+    @State private var notes: String
 
     private var trimmedNotes: String {
         notes.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isEditing: Bool {
+        existingMeeting != nil
+    }
+
+    init(existingMeeting: Core.CareMeeting? = nil, onSave: @escaping (Core.CareMeeting) -> Void) {
+        self.existingMeeting = existingMeeting
+        self.onSave = onSave
+        _date = State(initialValue: existingMeeting?.date ?? Date())
+        _providerType = State(initialValue: existingMeeting?.providerType ?? .doctor)
+        _notes = State(initialValue: existingMeeting?.notes ?? "")
     }
 
     var body: some View {
@@ -1240,7 +1777,7 @@ private struct CareMeetingSheet: View {
                 DatePicker("Date", selection: $date, displayedComponents: .date)
                 Picker("Provider", selection: $providerType) {
                     ForEach(Core.CareProviderType.allCases, id: \.self) { provider in
-                        Text(provider.label).tag(provider)
+                        Label(provider.label, systemImage: provider.symbolName).tag(provider)
                     }
                 }
                 Section("Notes") {
@@ -1249,7 +1786,7 @@ private struct CareMeetingSheet: View {
                         .textInputAutocapitalization(.sentences)
                 }
             }
-            .navigationTitle("Add Meeting")
+            .navigationTitle(isEditing ? "Edit Meeting" : "Add Meeting")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -1259,6 +1796,7 @@ private struct CareMeetingSheet: View {
                     Button("Save") {
                         onSave(
                             Core.CareMeeting(
+                                id: existingMeeting?.id ?? UUID(),
                                 date: date,
                                 providerType: providerType,
                                 notes: trimmedNotes

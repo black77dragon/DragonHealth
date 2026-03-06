@@ -558,7 +558,7 @@ private struct MealPhotoDraftRow: View {
 
     private func roundedAmountValue(_ value: Double) -> Double {
         if isDrinkCategory {
-            let symbol = units.first(where: { $0.id == item.amountUnitID })?.symbol?.lowercased()
+            let symbol = units.first(where: { $0.id == item.amountUnitID })?.symbol.lowercased()
             if symbol == "ml" {
                 return value.rounded()
             }

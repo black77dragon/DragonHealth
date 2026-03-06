@@ -10,6 +10,7 @@ struct HistoryCalendarView: View {
     let currentDay: Date
     @Binding var selectedDate: Date
     let indicators: [String: HistoryDayIndicator]
+    let nightGuardStatusesByDayKey: [String: NightGuardStatus]
     let onVisibleMonthChanged: (Date) -> Void
 
     @State private var displayedMonth: Date
@@ -19,12 +20,14 @@ struct HistoryCalendarView: View {
         currentDay: Date,
         selectedDate: Binding<Date>,
         indicators: [String: HistoryDayIndicator],
+        nightGuardStatusesByDayKey: [String: NightGuardStatus],
         onVisibleMonthChanged: @escaping (Date) -> Void
     ) {
         self.calendar = calendar
         self.currentDay = currentDay
         self._selectedDate = selectedDate
         self.indicators = indicators
+        self.nightGuardStatusesByDayKey = nightGuardStatusesByDayKey
         self.onVisibleMonthChanged = onVisibleMonthChanged
         let monthStart = Self.monthStart(for: selectedDate.wrappedValue, calendar: calendar)
         _displayedMonth = State(initialValue: monthStart)
@@ -87,6 +90,7 @@ struct HistoryCalendarView: View {
             ForEach(dates.indices, id: \.self) { index in
                 if let date = dates[index] {
                     let score = scoreValue(for: date)
+                    let nightGuardKept = nightGuardKept(for: date)
                     let isSelected = calendar.isDate(date, inSameDayAs: selectedDate)
                     let isToday = calendar.isDate(date, inSameDayAs: currentDay)
                     Button {
@@ -96,6 +100,7 @@ struct HistoryCalendarView: View {
                             date: date,
                             calendar: calendar,
                             score: score,
+                            nightGuardKept: nightGuardKept,
                             isSelected: isSelected,
                             isToday: isToday
                         )
@@ -159,6 +164,12 @@ struct HistoryCalendarView: View {
         }
     }
 
+    private func nightGuardKept(for date: Date) -> Bool {
+        let dayKey = DayBoundary(cutoffMinutes: 0).dayKey(for: date, calendar: calendar)
+        guard let status = nightGuardStatusesByDayKey[dayKey] else { return false }
+        return status.isCompliant
+    }
+
     private static func monthStart(for date: Date, calendar: Calendar) -> Date {
         calendar.dateInterval(of: .month, for: date)?.start ?? date
     }
@@ -168,6 +179,7 @@ private struct CalendarDayCell: View {
     let date: Date
     let calendar: Calendar
     let score: Double?
+    let nightGuardKept: Bool
     let isSelected: Bool
     let isToday: Bool
 
@@ -194,11 +206,19 @@ private struct CalendarDayCell: View {
                     .foregroundStyle((isSelected || isToday) ? .white : .primary)
             }
 
-            Text(scoreText)
-                .font(.footnote.weight(.semibold))
-                .monospacedDigit()
-                .foregroundStyle(score.map { ScoreColor.color(for: $0) } ?? .clear)
-                .opacity(score == nil ? 0 : 1)
+            HStack(spacing: 4) {
+                Text(scoreText)
+                    .font(.footnote.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(score.map { ScoreColor.color(for: $0) } ?? .clear)
+                    .opacity(score == nil ? 0 : 1)
+
+                Image(systemName: "moon.stars.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+                    .opacity(nightGuardKept ? 1 : 0)
+                    .accessibilityHidden(!nightGuardKept)
+            }
         }
         .frame(maxWidth: .infinity)
         .frame(height: 56)

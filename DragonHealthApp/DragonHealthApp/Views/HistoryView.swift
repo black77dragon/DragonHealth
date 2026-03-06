@@ -13,10 +13,12 @@ struct HistoryView: View {
     @State private var scoreSummary: DailyScoreSummary?
     @State private var calendarIndicators: [String: HistoryDayIndicator] = [:]
     @State private var scoreHistoryPoints: [ScoreHistoryPoint] = []
+    @State private var weeklyReflection: WeeklyReflection?
     @State private var visibleMonthDate = Date()
     @State private var showingQuickAdd = false
     @State private var editingEntry: DailyLogEntry?
     @AppStorage("history.scoreTimeFrame") private var scoreTimeFrameRaw: String = HistoryScoreTimeFrame.month.rawValue
+    @AppStorage(NightGuardTracking.recordsStorageKey) private var nightGuardRecordsJSON: String = ""
 
     private let totalsCalculator = DailyTotalsCalculator()
     private let evaluator = DailyTotalEvaluator()
@@ -33,6 +35,31 @@ struct HistoryView: View {
         )
     }
 
+    private var nightGuardStatusesByDayKey: [String: NightGuardStatus] {
+        NightGuardTracking.statusByDayKey(from: nightGuardRecordsJSON)
+    }
+
+    private var nightGuardHistoryPoints: [NightGuardHistoryPoint] {
+        let calendar = store.appCalendar
+        let referenceDate = store.currentDay
+        let startDate = scoreTimeFrame.startDate(referenceDate: referenceDate, calendar: calendar) ?? Date.distantPast
+        let records = NightGuardTracking.decodeRecords(from: nightGuardRecordsJSON)
+        let latestByDay = Dictionary(grouping: records, by: \.dayKey).compactMapValues { dayRecords in
+            dayRecords.max(by: { $0.updatedAt < $1.updatedAt })
+        }
+        return latestByDay.values
+            .compactMap { record in
+                guard record.status != .pending,
+                      let date = DayKeyParser.date(from: record.dayKey, timeZone: calendar.timeZone),
+                      date >= startDate,
+                      date <= referenceDate else {
+                    return nil
+                }
+                return NightGuardHistoryPoint(date: date, didKeepRule: record.status.isCompliant)
+            }
+            .sorted(by: { $0.date < $1.date })
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -43,6 +70,7 @@ struct HistoryView: View {
                     currentDay: store.currentDay,
                     selectedDate: $selectedDate,
                     indicators: calendarIndicators,
+                    nightGuardStatusesByDayKey: nightGuardStatusesByDayKey,
                     onVisibleMonthChanged: { newMonthDate in
                         let calendar = store.appCalendar
                         let newComponents = calendar.dateComponents([.year, .month], from: newMonthDate)
@@ -61,6 +89,10 @@ struct HistoryView: View {
                     timeFrame: scoreTimeFrameBinding,
                     points: scoreHistoryPoints
                 )
+                HistoryNightGuardHistorySection(points: nightGuardHistoryPoints)
+                if let weeklyReflection {
+                    HistoryWeeklyReflectionCard(reflection: weeklyReflection)
+                }
 
                 if !entries.isEmpty {
                     HistoryEntriesView(
@@ -183,6 +215,7 @@ struct HistoryView: View {
             profilesByCategoryID: store.scoreProfiles,
             compensationRules: store.compensationRules
         )
+        await loadWeeklyReflection()
     }
 
     private func loadScoreHistory() async {
@@ -209,6 +242,100 @@ struct HistoryView: View {
         let rangeStart = calendar.date(byAdding: .day, value: -7, to: monthStart) ?? monthStart
         let rangeEnd = calendar.date(byAdding: .day, value: 7, to: monthEnd) ?? monthEnd
         return DateInterval(start: rangeStart, end: rangeEnd)
+    }
+
+    private func loadWeeklyReflection() async {
+        let calendar = store.appCalendar
+        let endDay = store.dayBoundary.dayStart(for: selectedDate, calendar: calendar)
+        guard let startDay = calendar.date(byAdding: .day, value: -6, to: endDay) else {
+            weeklyReflection = nil
+            return
+        }
+
+        let enabledCategories = store.categories.filter { $0.isEnabled }
+        var metCounts: [UUID: Int] = [:]
+        var missCounts: [UUID: Int] = [:]
+        var scores: [Double] = []
+
+        for offset in 0..<7 {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: startDay) else { continue }
+            let reference = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+            let log = await store.fetchDailyLog(for: reference)
+            let entries = log?.entries ?? []
+            let totalsByCategory = totalsCalculator.totalsByCategory(entries: entries)
+            let adherence = evaluator.evaluate(categories: store.categories, totalsByCategoryID: totalsByCategory)
+            let score = scoreEvaluator.evaluate(
+                categories: store.categories,
+                totalsByCategoryID: totalsByCategory,
+                profilesByCategoryID: store.scoreProfiles,
+                compensationRules: store.compensationRules
+            )
+            scores.append(score.overallScore)
+            for result in adherence.categoryResults {
+                if result.targetMet {
+                    metCounts[result.categoryID, default: 0] += 1
+                } else {
+                    missCounts[result.categoryID, default: 0] += 1
+                }
+            }
+        }
+
+        let wins = enabledCategories
+            .map { category in
+                (category, metCounts[category.id, default: 0])
+            }
+            .filter { $0.1 > 0 }
+            .sorted { lhs, rhs in
+                if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+                return lhs.0.sortOrder < rhs.0.sortOrder
+            }
+            .prefix(3)
+            .map { item in
+                "\(item.0.name): \(item.1)/7 days on target"
+            }
+
+        let frictions = enabledCategories
+            .map { category in
+                (category, missCounts[category.id, default: 0])
+            }
+            .filter { $0.1 > 0 }
+            .sorted { lhs, rhs in
+                if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+                return lhs.0.sortOrder < rhs.0.sortOrder
+            }
+            .prefix(2)
+            .map { item in
+                "\(item.0.name): missed \(item.1)/7 days"
+            }
+
+        let scoreDelta: Double? = {
+            guard let first = scores.first, let last = scores.last else { return nil }
+            return last - first
+        }()
+
+        let adjustment: String = {
+            guard let topFriction = enabledCategories
+                .map({ ($0, missCounts[$0.id, default: 0]) })
+                .max(by: { $0.1 < $1.1 }),
+                  topFriction.1 > 0 else {
+                return "Keep the current routine and repeat your strongest meal pattern."
+            }
+            if DrinkRules.isDrinkCategory(topFriction.0) {
+                return "Set a fixed hydration checkpoint in the morning and one in the afternoon."
+            }
+            if topFriction.0.name.lowercased().contains("sport") {
+                return "Anchor one short activity block right after your most stable meal."
+            }
+            return "Add one pre-committed \(topFriction.0.name.lowercased()) entry in your earliest meal window."
+        }()
+
+        weeklyReflection = WeeklyReflection(
+            rangeText: WeeklyReflection.rangeText(start: startDay, end: endDay, calendar: calendar),
+            wins: wins,
+            frictions: frictions,
+            adjustment: adjustment,
+            scoreDelta: scoreDelta
+        )
     }
 }
 
@@ -267,6 +394,7 @@ private struct HistoryCalendarLegend: View {
         HStack(spacing: 16) {
             legendItem(color: ScoreColor.color(for: 100), label: "High score")
             legendItem(color: ScoreColor.color(for: 0), label: "Low score")
+            symbolLegendItem(symbol: "moon.stars.fill", color: .green, label: "Night Guard kept")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -277,6 +405,14 @@ private struct HistoryCalendarLegend: View {
             Circle()
                 .fill(color)
                 .frame(width: 8, height: 8)
+            Text(label)
+        }
+    }
+
+    private func symbolLegendItem(symbol: String, color: Color, label: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
             Text(label)
         }
     }
@@ -293,6 +429,91 @@ private struct HistoryScoreHistorySection: View {
             HistoryTimeFramePicker(timeFrame: $timeFrame)
             ScoreHistoryChartCard(points: points)
         }
+    }
+}
+
+private struct HistoryNightGuardHistorySection: View {
+    let points: [NightGuardHistoryPoint]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Night Guard History")
+                .font(.headline)
+            NightGuardHistoryChartCard(points: points)
+        }
+    }
+}
+
+private struct HistoryWeeklyReflectionCard: View {
+    let reflection: WeeklyReflection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Weekly Reflection")
+                    .font(.headline)
+                Spacer()
+                Text(reflection.rangeText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let scoreDelta = reflection.scoreDelta {
+                Text(scoreDelta >= 0 ? "Score trend +\(scoreDelta.cleanNumber)" : "Score trend \(scoreDelta.cleanNumber)")
+                    .font(.subheadline)
+                    .foregroundStyle(scoreDelta >= 0 ? .green : .orange)
+            }
+
+            reflectionSection(title: "3 wins", lines: reflection.wins, emptyState: "No wins logged yet.")
+            reflectionSection(title: "2 friction points", lines: reflection.frictions, emptyState: "No major friction detected.")
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("1 adjustment")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(reflection.adjustment)
+                    .font(.subheadline)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+
+    private func reflectionSection(title: String, lines: [String], emptyState: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if lines.isEmpty {
+                Text(emptyState)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(lines, id: \.self) { line in
+                    Text(line)
+                        .font(.subheadline)
+                }
+            }
+        }
+    }
+}
+
+private struct WeeklyReflection {
+    let rangeText: String
+    let wins: [String]
+    let frictions: [String]
+    let adjustment: String
+    let scoreDelta: Double?
+
+    static func rangeText(start: Date, end: Date, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = calendar.locale ?? .current
+        formatter.dateFormat = "MMM d"
+        return "\(formatter.string(from: start))-\(formatter.string(from: end))"
     }
 }
 
@@ -372,6 +593,13 @@ private struct ScoreHistoryPoint: Identifiable {
     var id: Date { date }
 }
 
+private struct NightGuardHistoryPoint: Identifiable {
+    let date: Date
+    let didKeepRule: Bool
+
+    var id: Date { date }
+}
+
 private struct ScoreHistoryChartCard: View {
     let points: [ScoreHistoryPoint]
 
@@ -440,6 +668,74 @@ private struct ScoreHistoryChartCard: View {
         }
         .chartYScale(domain: 0...100)
         .frame(height: 160)
+    }
+}
+
+private struct NightGuardHistoryChartCard: View {
+    let points: [NightGuardHistoryPoint]
+
+    private var complianceText: String {
+        guard !points.isEmpty else { return "No logged Night Guard events in this time frame." }
+        let kept = points.filter(\.didKeepRule).count
+        let rate = Int((Double(kept) / Double(points.count) * 100).rounded())
+        return "\(rate)% kept over \(points.count) logged nights"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Compliance")
+                    .font(.headline)
+                Spacer()
+                Text(complianceText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if points.isEmpty {
+                Text("Mark nights as respected, violated, or protein-exception in Night Guard.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                #if canImport(Charts)
+                if #available(iOS 16.0, *) {
+                    complianceChart()
+                } else {
+                    Text("Charts require iOS 16 or later.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                #else
+                Text("Charts are unavailable on this device.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                #endif
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+
+    @ViewBuilder
+    private func complianceChart() -> some View {
+        Chart {
+            ForEach(points) { point in
+                BarMark(
+                    x: .value("Date", point.date),
+                    y: .value("Kept", point.didKeepRule ? 1.0 : 0.0)
+                )
+                .foregroundStyle(point.didKeepRule ? Color.green : Color.red.opacity(0.7))
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 4))
+        }
+        .chartYAxis(.hidden)
+        .chartYScale(domain: 0...1)
+        .frame(height: 120)
     }
 }
 
