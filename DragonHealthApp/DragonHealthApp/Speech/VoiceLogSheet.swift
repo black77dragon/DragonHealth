@@ -51,97 +51,107 @@ struct VoiceLogSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Language") {
-                    Picker("Recognition", selection: $selectedLanguage) {
-                        ForEach(VoiceLogLanguage.allCases) { language in
-                            Text(language.label).tag(language)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(speech.isRecording)
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VoiceLogHeaderCard(
+                        selectedLanguage: $selectedLanguage,
+                        draftCount: draftItems.count,
+                        transcriptLength: transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).count
+                    )
 
-                Section("Recording") {
-                    HStack(spacing: 12) {
-                        Button {
-                            speech.autoDeleteOnPause = autoDeleteOnPause
-                            speech.start(localeIdentifier: selectedLanguage.localeIdentifier)
-                        } label: {
-                            Label("Start", systemImage: "mic.circle.fill")
+                    VoiceLogSectionCard(title: "Record or paste") {
+                        HStack(spacing: 12) {
+                            Button {
+                                speech.autoDeleteOnPause = autoDeleteOnPause
+                                speech.start(localeIdentifier: selectedLanguage.localeIdentifier)
+                            } label: {
+                                Label("Start", systemImage: "mic.circle.fill")
+                            }
+                            .glassButton(.text)
+                            .disabled(speech.isRecording)
+
+                            Button {
+                                speech.stop()
+                            } label: {
+                                Label("End", systemImage: "stop.circle.fill")
+                            }
+                            .glassButton(.text)
+                            .disabled(!speech.isRecording)
+
+                            Button("Restart") {
+                                transcriptText = ""
+                                speech.autoDeleteOnPause = autoDeleteOnPause
+                                speech.restart(localeIdentifier: selectedLanguage.localeIdentifier)
+                            }
+                            .glassButton(.text)
+                            .disabled(speech.isRecording)
+                        }
+
+                        Toggle("Auto-delete on pause", isOn: $autoDeleteOnPause)
+                            .disabled(speech.isRecording)
+
+                        TextEditor(text: $transcriptText)
+                            .frame(minHeight: 140)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(Color(.secondarySystemBackground))
+                            )
+                            .disabled(speech.isRecording)
+
+                        Button("Parse Transcript") {
+                            parseDraft()
                         }
                         .glassButton(.text)
-                        .disabled(speech.isRecording)
+                        .disabled(speech.isRecording || transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                        Button {
-                            speech.stop()
-                        } label: {
-                            Label("End", systemImage: "stop.circle.fill")
+                        if let errorMessage = speech.errorMessage {
+                            Text(errorMessage)
+                                .foregroundStyle(.red)
+                                .font(.footnote)
                         }
-                        .glassButton(.text)
-                        .disabled(!speech.isRecording)
 
-                        Button("Restart") {
-                            transcriptText = ""
-                            speech.autoDeleteOnPause = autoDeleteOnPause
-                            speech.restart(localeIdentifier: selectedLanguage.localeIdentifier)
+                        if let parseError {
+                            Text(parseError)
+                                .foregroundStyle(.red)
+                                .font(.footnote)
                         }
-                        .glassButton(.text)
-                        .disabled(speech.isRecording)
                     }
 
-                    Toggle("Auto-delete on pause", isOn: $autoDeleteOnPause)
-                        .disabled(speech.isRecording)
+                    if !draftItems.isEmpty {
+                        VoiceLogSectionCard(title: "Review draft") {
+                            Picker("Meal Slot", selection: $selectedMealSlotID) {
+                                ForEach(mealSlots) { slot in
+                                    Text(slot.name).tag(Optional(slot.id))
+                                }
+                            }
+                            .pickerStyle(.segmented)
 
-                    TextEditor(text: $transcriptText)
-                        .frame(minHeight: 120)
-                        .disabled(speech.isRecording)
-
-                    Button("Parse Transcript") {
-                        parseDraft()
-                    }
-                    .glassButton(.text)
-                    .disabled(speech.isRecording || transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    if let errorMessage = speech.errorMessage {
-                        Text(errorMessage)
-                            .foregroundStyle(.red)
-                            .font(.footnote)
-                    }
-
-                    if let parseError {
-                        Text(parseError)
-                            .foregroundStyle(.red)
-                            .font(.footnote)
-                    }
-                }
-
-                if !draftItems.isEmpty {
-                    Section("Meal") {
-                        Picker("Meal Slot", selection: $selectedMealSlotID) {
-                            ForEach(mealSlots) { slot in
-                                Text(slot.name).tag(Optional(slot.id))
+                            ForEach($draftItems) { $item in
+                                VoiceDraftRow(
+                                    item: $item,
+                                    categories: categories,
+                                    foodItems: foodItems,
+                                    units: units
+                                )
+                                .padding(14)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .fill(Color(.secondarySystemBackground))
+                                )
                             }
                         }
-                    }
-
-                    ForEach($draftItems) { $item in
-                        Section("Item") {
-                            VoiceDraftRow(
-                                item: $item,
-                                categories: categories,
-                                foodItems: foodItems,
-                                units: units
-                            )
+                    } else {
+                        VoiceLogSectionCard(title: "Draft") {
+                            Text("No draft items yet. Record a meal in natural language, then parse the transcript.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                } else {
-                    Section("Draft") {
-                        Text("No draft items yet.")
-                            .foregroundStyle(.secondary)
-                    }
                 }
+                .padding(20)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Voice Log")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -212,6 +222,92 @@ struct VoiceLogSheet: View {
         guard item.categoryID != nil else { return false }
         guard let portion = item.portion, portion > 0 else { return false }
         return true
+    }
+}
+
+private struct VoiceLogHeaderCard: View {
+    @Binding var selectedLanguage: VoiceLogLanguage
+    let draftCount: Int
+    let transcriptLength: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Voice capture")
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                Text("Speak naturally, then clean up only what the parser could not infer.")
+                    .font(.title3.weight(.semibold))
+            }
+
+            Picker("Recognition", selection: $selectedLanguage) {
+                ForEach(VoiceLogLanguage.allCases) { language in
+                    Text(language.label).tag(language)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            HStack(spacing: 12) {
+                VoiceLogMetric(label: "Draft items", value: "\(draftCount)")
+                VoiceLogMetric(label: "Transcript", value: transcriptLength == 0 ? "Empty" : "\(transcriptLength) chars")
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.teal.opacity(0.15), Color.blue.opacity(0.08), Color(.secondarySystemBackground)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+}
+
+private struct VoiceLogMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.thinMaterial)
+        )
+    }
+}
+
+private struct VoiceLogSectionCard<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.headline)
+            content
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(.systemBackground))
+        )
     }
 }
 

@@ -89,113 +89,117 @@ struct MealPhotoLogSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Photo") {
-                    if let selectedImage {
-                        Image(uiImage: selectedImage)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: .infinity, maxHeight: 220)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    } else {
-                        Text("Take or choose a meal photo to start.")
-                            .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    MealPhotoHeaderCard(
+                        selectedImage: selectedImage,
+                        draftCount: draftItems.count,
+                        lowConfidenceCount: lowConfidenceItems.count
+                    )
+
+                    MealPhotoSectionCard(title: "Capture") {
+                        HStack(spacing: 12) {
+                            Button {
+                                showingCamera = true
+                            } label: {
+                                Label("Take Photo", systemImage: "camera")
+                            }
+                            .glassButton(.text)
+                            .disabled(!hasCamera)
+
+                            PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
+                                Label("Choose Photo", systemImage: "photo")
+                                    .glassLabel(.text)
+                            }
+                        }
                     }
 
-                    HStack(spacing: 12) {
+                    MealPhotoSectionCard(title: "Analyze") {
+                        if MealPhotoAIConfig.client() == nil {
+                            Text("OpenAI API key missing. Add it in More > Data & integrations > Meal Photo AI.")
+                                .foregroundStyle(.red)
+                                .font(.footnote)
+                        }
+
                         Button {
-                            showingCamera = true
+                            analyzePhoto()
                         } label: {
-                            Label("Take Photo", systemImage: "camera")
+                            Label("AI Detect Foods", systemImage: "sparkles")
                         }
                         .glassButton(.text)
-                        .disabled(!hasCamera)
+                        .disabled(!canAnalyze)
 
-                        PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
-                            Label("Choose Photo", systemImage: "photo")
-                                .glassLabel(.text)
+                        if isAnalyzing {
+                            ProgressView("Analyzing image...")
+                                .font(.footnote)
                         }
-                    }
-                }
 
-                Section("AI Analysis") {
-                    if MealPhotoAIConfig.client() == nil {
-                        Text("OpenAI API key missing. Add it in Manage > Integrations > Meal Photo AI.")
-                            .foregroundStyle(.red)
-                            .font(.footnote)
-                    }
+                        if let parseError {
+                            Text(parseError)
+                                .foregroundStyle(.red)
+                                .font(.footnote)
+                        }
 
-                    Button {
-                        analyzePhoto()
-                    } label: {
-                        Label("AI Detect Foods", systemImage: "sparkles")
-                    }
-                    .glassButton(.text)
-                    .disabled(!canAnalyze)
-
-                    if isAnalyzing {
-                        ProgressView("Analyzing image...")
-                            .font(.footnote)
-                    }
-
-                    if let parseError {
-                        Text(parseError)
-                            .foregroundStyle(.red)
-                            .font(.footnote)
+                        if !draftItems.isEmpty {
+                            Text("Detected \(draftItems.count) possible food item\(draftItems.count == 1 ? "" : "s").")
+                                .foregroundStyle(.secondary)
+                                .font(.footnote)
+                        }
                     }
 
                     if !draftItems.isEmpty {
-                        Text("Detected \(draftItems.count) possible food item\(draftItems.count == 1 ? "" : "s").")
-                            .foregroundStyle(.secondary)
-                            .font(.footnote)
-                    }
-                }
+                        if !lowConfidenceItems.isEmpty {
+                            MealPhotoSectionCard(title: "Review needed") {
+                                Text("Some detected items are low confidence. Confirm them before saving.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.orange)
 
-                if !draftItems.isEmpty {
-                    if !lowConfidenceItems.isEmpty {
-                        Section("Review Needed") {
-                            Text("Some detected items are low confidence. Review before saving.")
-                                .font(.footnote)
-                                .foregroundStyle(.orange)
-
-                            ForEach(lowConfidenceItems) { item in
-                                Text("\(item.foodText): \((item.confidence * 100).rounded().cleanNumber)% confidence (\(MealPhotoConfidenceRAG(confidence: item.confidence).label))")
-                                    .font(.caption)
-                                    .foregroundStyle(MealPhotoConfidenceRAG(confidence: item.confidence).color)
-                            }
-
-                            Toggle("I reviewed low-confidence items", isOn: $lowConfidenceReviewed)
-                        }
-                    }
-
-                    Section("Meal") {
-                        Picker("Meal Slot", selection: $selectedMealSlotID) {
-                            ForEach(mealSlots) { slot in
-                                Text(slot.name).tag(Optional(slot.id))
-                            }
-                        }
-                    }
-
-                    ForEach($draftItems) { $item in
-                        Section("Item") {
-                            MealPhotoDraftRow(
-                                item: $item,
-                                categories: categories,
-                                foodItems: availableFoods,
-                                units: units,
-                                onDelete: {
-                                    deleteDraftItem(id: item.id)
+                                ForEach(lowConfidenceItems) { item in
+                                    Text("\(item.foodText): \((item.confidence * 100).rounded().cleanNumber)% confidence (\(MealPhotoConfidenceRAG(confidence: item.confidence).label))")
+                                        .font(.caption)
+                                        .foregroundStyle(MealPhotoConfidenceRAG(confidence: item.confidence).color)
                                 }
-                            )
+
+                                Toggle("I reviewed low-confidence items", isOn: $lowConfidenceReviewed)
+                            }
+                        }
+
+                        MealPhotoSectionCard(title: "Review draft") {
+                            Picker("Meal Slot", selection: $selectedMealSlotID) {
+                                ForEach(mealSlots) { slot in
+                                    Text(slot.name).tag(Optional(slot.id))
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            ForEach($draftItems) { $item in
+                                MealPhotoDraftRow(
+                                    item: $item,
+                                    categories: categories,
+                                    foodItems: availableFoods,
+                                    units: units,
+                                    onDelete: {
+                                        deleteDraftItem(id: item.id)
+                                    }
+                                )
+                                .padding(14)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .fill(Color(.secondarySystemBackground))
+                                )
+                            }
+                        }
+                    } else {
+                        MealPhotoSectionCard(title: "Draft") {
+                            Text("No draft items yet. Start with a clear photo, then review the detected foods.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                } else {
-                    Section("Draft") {
-                        Text("No draft items yet.")
-                            .foregroundStyle(.secondary)
-                    }
                 }
+                .padding(20)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Photo Log")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -359,6 +363,98 @@ struct MealPhotoLogSheet: View {
     private func deleteDraftItem(id: UUID) {
         draftItems.removeAll { $0.id == id }
         lowConfidenceReviewed = false
+    }
+}
+
+private struct MealPhotoHeaderCard: View {
+    let selectedImage: UIImage?
+    let draftCount: Int
+    let lowConfidenceCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let selectedImage {
+                Image(uiImage: selectedImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            } else {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(.secondarySystemBackground))
+                    .frame(maxWidth: .infinity, minHeight: 180)
+                    .overlay {
+                        VStack(spacing: 8) {
+                            Image(systemName: "camera.macro")
+                                .font(.system(size: 28))
+                                .foregroundStyle(.secondary)
+                            Text("Take or choose a meal photo to start.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+            }
+
+            HStack(spacing: 12) {
+                MealPhotoMetric(label: "Detected", value: "\(draftCount)")
+                MealPhotoMetric(label: "Review", value: "\(lowConfidenceCount)")
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.orange.opacity(0.15), Color.red.opacity(0.08), Color(.secondarySystemBackground)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+}
+
+private struct MealPhotoMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.thinMaterial)
+        )
+    }
+}
+
+private struct MealPhotoSectionCard<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.headline)
+            content
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(.systemBackground))
+        )
     }
 }
 

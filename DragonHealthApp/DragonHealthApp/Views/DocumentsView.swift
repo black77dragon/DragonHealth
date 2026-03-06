@@ -10,30 +10,75 @@ struct DocumentsView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingPicker = false
     @State private var previewDocument: Core.HealthDocument?
+    @State private var documentPendingDelete: Core.HealthDocument?
     @State private var showingError = false
     @State private var errorMessage = ""
+    @State private var searchText = ""
+    @AppStorage("documents.sort") private var sortOrderRaw: String = DocumentsSortOrder.newest.rawValue
+
+    private var sortOrder: DocumentsSortOrder {
+        DocumentsSortOrder(rawValue: sortOrderRaw) ?? .newest
+    }
+
+    private var filteredDocuments: [Core.HealthDocument] {
+        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matching = store.documents.filter { document in
+            guard !trimmedSearch.isEmpty else { return true }
+            return document.title.localizedStandardContains(trimmedSearch)
+                || document.fileType.searchLabel.localizedStandardContains(trimmedSearch)
+        }
+
+        switch sortOrder {
+        case .newest:
+            return matching.sorted { $0.createdAt > $1.createdAt }
+        case .oldest:
+            return matching.sorted { $0.createdAt < $1.createdAt }
+        case .title:
+            return matching.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        }
+    }
 
     var body: some View {
         List {
-            if store.documents.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("No documents yet.")
-                        .font(.headline)
-                    Text("Add PDFs or images to keep important records handy.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            Section {
+                DocumentsHeroCard(
+                    documentCount: store.documents.count,
+                    pdfCount: store.documents.filter { $0.fileType == .pdf }.count,
+                    imageCount: store.documents.filter { $0.fileType != .pdf }.count,
+                    sortOrder: Binding(
+                        get: { sortOrder },
+                        set: { sortOrderRaw = $0.rawValue }
+                    )
+                )
+                .listRowBackground(Color.clear)
+            }
+
+            if filteredDocuments.isEmpty {
+                Section {
+                    DocumentsEmptyStateCard(
+                        title: store.documents.isEmpty ? "No documents yet" : "No documents match your search",
+                        message: store.documents.isEmpty
+                            ? "Add PDFs or images to keep medical records, scans, and letters close at hand."
+                            : "Try a different search term or switch the sort order."
+                    )
+                    .listRowBackground(Color.clear)
                 }
-                .padding(.vertical, 12)
             } else {
-                ForEach(store.documents) { document in
-                    DocumentRow(document: document) {
-                        previewDocument = document
+                Section("Library") {
+                    ForEach(filteredDocuments) { document in
+                        DocumentRow(document: document) {
+                            previewDocument = document
+                        } onDelete: {
+                            documentPendingDelete = document
+                        }
                     }
                 }
-                .onDelete(perform: deleteDocuments)
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Documents")
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -55,6 +100,29 @@ struct DocumentsView: View {
         }
         .sheet(item: $previewDocument) { document in
             DocumentPreviewSheet(url: DocumentStorage.url(for: document.fileName))
+        }
+        .confirmationDialog(
+            "Delete Document?",
+            isPresented: Binding(
+                get: { documentPendingDelete != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        documentPendingDelete = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible,
+            presenting: documentPendingDelete
+        ) { document in
+            Button("Delete \(document.title)", role: .destructive) {
+                delete(document)
+                documentPendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                documentPendingDelete = nil
+            }
+        } message: { document in
+            Text("This removes \(document.title) from DragonHealth.")
         }
         .alert("Unable to Add Document", isPresented: $showingError) {
             Button("OK", role: .cancel) {}
@@ -79,24 +147,21 @@ struct DocumentsView: View {
         }
     }
 
-    private func deleteDocuments(_ indices: IndexSet) {
-        for index in indices {
-            guard index < store.documents.count else { continue }
-            let document = store.documents[index]
-            do {
-                try DocumentStorage.deleteDocument(fileName: document.fileName)
-            } catch {
-                errorMessage = error.localizedDescription
-                showingError = true
-            }
-            Task { await store.deleteDocument(document) }
+    private func delete(_ document: Core.HealthDocument) {
+        do {
+            try DocumentStorage.deleteDocument(fileName: document.fileName)
+        } catch {
+            errorMessage = error.localizedDescription
+            showingError = true
         }
+        Task { await store.deleteDocument(document) }
     }
 }
 
 private struct DocumentRow: View {
     let document: Core.HealthDocument
     let onView: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -126,6 +191,128 @@ private struct DocumentRow: View {
             Button("View Document") {
                 onView()
             }
+            Button("Delete", role: .destructive) {
+                onDelete()
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+}
+
+private enum DocumentsSortOrder: String, CaseIterable, Identifiable {
+    case newest
+    case oldest
+    case title
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .newest: return "Newest"
+        case .oldest: return "Oldest"
+        case .title: return "Title"
+        }
+    }
+}
+
+private struct DocumentsHeroCard: View {
+    let documentCount: Int
+    let pdfCount: Int
+    let imageCount: Int
+    @Binding var sortOrder: DocumentsSortOrder
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Records library")
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                Text("Keep the important paperwork easy to find, preview, and sort.")
+                    .font(.title3.weight(.semibold))
+                HStack(spacing: 12) {
+                    DocumentsHeroMetric(label: "Total", value: "\(documentCount)")
+                    DocumentsHeroMetric(label: "PDFs", value: "\(pdfCount)")
+                    DocumentsHeroMetric(label: "Images", value: "\(imageCount)")
+                }
+            }
+
+            Picker("Sort", selection: $sortOrder) {
+                ForEach(DocumentsSortOrder.allCases) { order in
+                    Text(order.label).tag(order)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.indigo.opacity(0.15), Color.blue.opacity(0.08), Color(.secondarySystemBackground)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+}
+
+private struct DocumentsHeroMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.headline.monospacedDigit())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.thinMaterial)
+        )
+    }
+}
+
+private struct DocumentsEmptyStateCard: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+}
+
+private extension Core.DocumentType {
+    var searchLabel: String {
+        switch self {
+        case .pdf:
+            return "PDF"
+        case .image:
+            return "Image"
         }
     }
 }

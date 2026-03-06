@@ -2867,6 +2867,7 @@ struct QuickAddSheet: View {
     @State private var drinkUnitID: UUID?
     @State private var isSyncing = false
     @State private var notes: String = ""
+    @State private var showingAdvanced = false
 
     init(
         categories: [Core.Category],
@@ -2994,6 +2995,15 @@ struct QuickAddSheet: View {
         return mealSlots.first(where: { $0.id == selectedMealSlotID })?.name
     }
 
+    private var favoriteFoods: [FoodItem] {
+        Array(availableFoodItems.filter(\.isFavorite).prefix(6))
+    }
+
+    private var suggestedFoods: [FoodItem] {
+        let base = favoriteFoods.isEmpty ? availableFoodItems : favoriteFoods
+        return Array(base.prefix(6))
+    }
+
     private var mealSelectionSummary: String {
         if let selectedMealSlotName {
             return selectedMealSlotName
@@ -3025,21 +3035,58 @@ struct QuickAddSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                if let contextDate {
-                    Section("Day") {
-                        Text(contextDate, style: .date)
-                            .font(.headline)
+            List {
+                Section {
+                    QuickAddHeaderCard(
+                        contextDate: contextDate,
+                        mealSummary: mealSelectionSummary,
+                        categorySummary: categorySelectionSummary,
+                        foodSummary: selectedFoodItem?.name
+                    )
+                    .listRowBackground(Color.clear)
+                }
+
+                if !suggestedFoods.isEmpty {
+                    Section("Fast picks") {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(suggestedFoods) { item in
+                                    QuickAddFoodChip(
+                                        item: item,
+                                        categoryName: categories.first(where: { $0.id == item.categoryID })?.name ?? "Food",
+                                        isSelected: selectedFoodID == item.id
+                                    ) {
+                                        selectedFoodID = item.id
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     }
                 }
 
                 selectorSection
-
-                inputModeSection
                 portionSection
-                amountSection
-                notesSection
+
+                Section {
+                    DisclosureGroup(isExpanded: $showingAdvanced) {
+                        VStack(spacing: 0) {
+                            inputModeSection
+                            amountSection
+                            notesSection
+                        }
+                    } label: {
+                        QuickAddDisclosureLabel(
+                            title: "More details",
+                            subtitle: amountInputEnabled ? "Exact amount, units, and notes" : "Notes"
+                        )
+                    }
+                }
+                .listRowBackground(Color.clear)
             }
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Quick Add")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -3137,7 +3184,7 @@ struct QuickAddSheet: View {
 
     @ViewBuilder
     private var selectorSection: some View {
-        Section {
+        Section("What are you logging?") {
             NavigationLink {
                 QuickAddMealSlotPicker(
                     mealSlots: mealSlots,
@@ -3194,7 +3241,10 @@ struct QuickAddSheet: View {
 
     @ViewBuilder
     private var inputModeSection: some View {
-        Section("Input Mode") {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Input Mode")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
             Picker("Input Mode", selection: $inputMode) {
                 ForEach(EntryInputMode.allCases) { mode in
                     Text(mode.label).tag(mode)
@@ -3212,7 +3262,12 @@ struct QuickAddSheet: View {
 
     @ViewBuilder
     private var portionSection: some View {
-        Section("Portion") {
+        Section("How much?") {
+            QuickAddPortionPresets(
+                portion: $portion,
+                increment: portionIncrement,
+                accentColor: selectedCategoryColor
+            )
             PortionWheelControl(portion: $portion, accentColor: selectedCategoryColor, increment: portionIncrement)
                 .disabled(inputMode == .amount && amountInputEnabled)
         }
@@ -3220,7 +3275,10 @@ struct QuickAddSheet: View {
 
     @ViewBuilder
     private var amountSection: some View {
-        Section("Amount") {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Amount")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
             HStack {
                 TextField("0", text: $amountText)
                     .keyboardType(activeUnit?.allowsDecimal == false ? .numberPad : .decimalPad)
@@ -3249,7 +3307,10 @@ struct QuickAddSheet: View {
 
     @ViewBuilder
     private var notesSection: some View {
-        Section("Notes") {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Notes")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
             TextField("Add a note", text: $notes, axis: .vertical)
                 .lineLimit(3, reservesSpace: true)
         }
@@ -3346,6 +3407,140 @@ struct QuickAddSheet: View {
         let correctedAmount = roundedAmountValue(clamped * amountPerPortion)
         amountText = correctedAmount.cleanNumber
         isSyncing = false
+    }
+}
+
+private struct QuickAddHeaderCard: View {
+    let contextDate: Date?
+    let mealSummary: String
+    let categorySummary: String
+    let foodSummary: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Quick log")
+                .font(.caption.weight(.semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            Text("Log the common case first. Open more details only when you need them.")
+                .font(.title3.weight(.semibold))
+            HStack(spacing: 12) {
+                QuickAddHeaderMetric(label: "Meal", value: mealSummary)
+                QuickAddHeaderMetric(label: "Category", value: categorySummary)
+            }
+            if let foodSummary {
+                QuickAddHeaderMetric(label: "Food", value: foodSummary)
+            }
+            if let contextDate {
+                Text(contextDate.formatted(date: .abbreviated, time: .omitted))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color.blue.opacity(0.14), Color.green.opacity(0.08), Color(.secondarySystemBackground)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+}
+
+private struct QuickAddHeaderMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.thinMaterial)
+        )
+    }
+}
+
+private struct QuickAddFoodChip: View {
+    let item: FoodItem
+    let categoryName: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.name)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text(categoryName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 140, alignment: .leading)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct QuickAddPortionPresets: View {
+    @Binding var portion: Double
+    let increment: Double
+    let accentColor: Color
+
+    private let presets: [Double] = [0.5, 1.0, 1.5, 2.0]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(presets, id: \.self) { value in
+                let roundedValue = PortionWheelControl.roundedToIncrement(value, increment: increment)
+                Button {
+                    portion = roundedValue
+                } label: {
+                    Text("\(roundedValue.cleanNumber)x")
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(abs(portion - roundedValue) < 0.001 ? accentColor.opacity(0.18) : Color(.secondarySystemBackground))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+private struct QuickAddDisclosureLabel: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.headline)
+            Text(subtitle)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
