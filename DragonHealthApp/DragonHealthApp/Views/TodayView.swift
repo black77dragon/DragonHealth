@@ -12,8 +12,8 @@ struct TodayView: View {
     @State private var scoreSummary: DailyScoreSummary?
     @State private var showingScoreExplain = false
     @State private var showingQuickAdd = false
-    @State private var showingVoiceLog = false
     @State private var showingPhotoLog = false
+    @State private var photoLogStartsWithCamera = false
     @State private var quickAddPrefillCategoryID: UUID?
     @State private var quickAddPrefillMealSlotID: UUID?
     @State private var editingEntry: DailyLogEntry?
@@ -36,6 +36,13 @@ struct TodayView: View {
     private var quickAddStyle: QuickAddStyle {
         QuickAddStyle(rawValue: quickAddStyleRaw) ?? .standard
     }
+    private var currentMealSlotID: UUID? {
+        store.currentMealSlotID()
+    }
+    private var currentMealSlotName: String? {
+        guard let currentMealSlotID else { return nil }
+        return store.mealSlots.first(where: { $0.id == currentMealSlotID })?.name
+    }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -48,6 +55,16 @@ struct TodayView: View {
                     categories: store.categories,
                     totals: totals,
                     onExplainScore: scoreSummary == nil ? nil : { showingScoreExplain = true }
+                )
+
+                TodayPhotoHeroCard(
+                    mealSlotName: currentMealSlotName,
+                    onTakePhoto: {
+                        openPhotoLog()
+                    },
+                    onQuickAdd: {
+                        openQuickAdd()
+                    }
                 )
 
                 if !visibleCategories.isEmpty {
@@ -66,7 +83,7 @@ struct TodayView: View {
                     TodayMealTimelineRail(
                         mealSlots: store.mealSlots,
                         entries: mealEntries,
-                        currentMealSlotID: store.currentMealSlotID(),
+                        currentMealSlotID: currentMealSlotID,
                         onQuickAddForMeal: { mealSlotID in
                             openQuickAdd(categoryID: nil, mealSlotID: mealSlotID)
                         }
@@ -131,16 +148,7 @@ struct TodayView: View {
                     .accessibilityLabel("Quick Add")
 
                     Button {
-                        showingVoiceLog = true
-                    } label: {
-                        Image(systemName: "mic")
-                            .glassLabel(.icon)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Voice Log")
-
-                    Button {
-                        showingPhotoLog = true
+                        openPhotoLog(startWithCamera: true)
                     } label: {
                         Image(systemName: "camera")
                             .glassLabel(.icon)
@@ -189,49 +197,14 @@ struct TodayView: View {
                 }
             )
         }
-        .sheet(isPresented: $showingVoiceLog) {
-            VoiceLogSheet(
-                categories: store.categories.filter { $0.isEnabled },
-                mealSlots: store.mealSlots,
-                foodItems: store.foodItems.filter { !$0.kind.isComposite },
-                units: store.units,
-                onSave: { mealSlot, items, _ in
-                    Task {
-                        var savedCount = 0
-                        for item in items {
-                            guard let categoryID = item.categoryID,
-                                  let portion = item.portion else { continue }
-                            let category = store.categories.first(where: { $0.id == categoryID })
-                            let increment = DrinkRules.portionIncrement(for: category)
-                            let trimmedNotes = item.notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                            let notes = trimmedNotes.isEmpty && item.matchedFoodID == nil ? item.foodText : trimmedNotes
-                            await store.logPortion(
-                                date: Date(),
-                                mealSlotID: mealSlot.id,
-                                categoryID: categoryID,
-                                portion: Portion(portion, increment: increment),
-                                amountValue: item.amountValue,
-                                amountUnitID: item.amountUnitID,
-                                notes: notes.isEmpty ? nil : notes,
-                                foodItemID: item.matchedFoodID
-                            )
-                            savedCount += 1
-                        }
-                        await loadToday()
-                        if savedCount > 0 {
-                            showSaveConfirmation("data is successfully stored")
-                        }
-                    }
-                }
-            )
-        }
         .sheet(isPresented: $showingPhotoLog) {
             MealPhotoLogSheet(
                 categories: store.categories.filter { $0.isEnabled },
                 mealSlots: store.mealSlots,
                 foodItems: store.foodItems.filter { !$0.kind.isComposite },
                 units: store.units,
-                preselectedMealSlotID: store.currentMealSlotID(),
+                preselectedMealSlotID: currentMealSlotID,
+                startWithCameraOnAppear: photoLogStartsWithCamera,
                 onSave: { mealSlot, items in
                     Task {
                         var savedCount = 0
@@ -261,6 +234,11 @@ struct TodayView: View {
                     }
                 }
             )
+        }
+        .onChange(of: showingPhotoLog) { _, isPresented in
+            if !isPresented {
+                photoLogStartsWithCamera = false
+            }
         }
         .sheet(item: $editingEntry) { entry in
             EntryEditSheet(
@@ -343,14 +321,20 @@ struct TodayView: View {
     @MainActor
     private func openQuickAdd(categoryID: UUID? = nil, mealSlotID: UUID? = nil) {
         quickAddPrefillCategoryID = categoryID
-        quickAddPrefillMealSlotID = mealSlotID ?? store.currentMealSlotID()
+        quickAddPrefillMealSlotID = mealSlotID ?? currentMealSlotID
         showingQuickAdd = true
+    }
+
+    @MainActor
+    private func openPhotoLog(startWithCamera: Bool = false) {
+        photoLogStartsWithCamera = startWithCamera
+        showingPhotoLog = true
     }
 
     private func logQuickAmount(categoryID: UUID, amount: Double) async {
         guard amount > 0 else { return }
         guard let category = store.categories.first(where: { $0.id == categoryID }) else { return }
-        guard let mealSlotID = store.currentMealSlotID() ?? store.mealSlots.first?.id else { return }
+        guard let mealSlotID = currentMealSlotID ?? store.mealSlots.first?.id else { return }
 
         let portion = Portion(amount, increment: DrinkRules.portionIncrement(for: category))
         await store.logPortion(
@@ -361,6 +345,108 @@ struct TodayView: View {
             notes: nil
         )
         await loadToday()
+    }
+}
+
+private struct TodayPhotoHeroCard: View {
+    let mealSlotName: String?
+    let onTakePhoto: () -> Void
+    let onQuickAdd: () -> Void
+
+    private var primaryTitle: String {
+        if let mealSlotName {
+            return "Add from a Photo for \(mealSlotName)"
+        }
+        return "Add from a Photo"
+    }
+
+    private var mealContext: String {
+        if let mealSlotName {
+            return "Ready to log \(mealSlotName.lowercased())."
+        }
+        return "Photo logging is the fastest way to add food."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("FASTEST WAY TO LOG")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.accentColor)
+
+                    Text("Add food from a photo")
+                        .font(.title3.weight(.semibold))
+
+                    Text("Snap your meal, review the detected foods, and save it into Today in a few taps.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(12)
+                    .background(
+                        Circle()
+                            .fill(Color.white.opacity(0.7))
+                    )
+            }
+
+            Label(mealContext, systemImage: "clock")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            Button(action: onTakePhoto) {
+                HStack(spacing: 8) {
+                    Image(systemName: "photo")
+                    Text(primaryTitle)
+                    Spacer()
+                    Image(systemName: "arrow.right")
+                        .font(.footnote.weight(.bold))
+                }
+                .font(.headline)
+                .foregroundStyle(Color.white)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .padding(.horizontal, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.accentColor)
+                )
+            }
+            .buttonStyle(.plain)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .accessibilityHint("Opens the meal photo logging flow.")
+
+            Button(action: onQuickAdd) {
+                Label("Use Quick Add instead", systemImage: "plus")
+            }
+            .glassButton(.text)
+            .accessibilityHint("Opens manual food logging.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.accentColor.opacity(0.18),
+                            Color.accentColor.opacity(0.08),
+                            Color(.secondarySystemBackground)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.white.opacity(0.5), lineWidth: 1)
+        )
     }
 }
 
@@ -2535,6 +2621,7 @@ struct QuickAddSheet: View {
     let onSave: (MealSlot, Core.Category, Double, Double?, UUID?, String?, UUID?) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: AppStore
     @State private var selectedCategoryID: UUID?
     @State private var selectedMealSlotID: UUID?
     @State private var selectedFoodID: UUID?
@@ -2778,8 +2865,6 @@ struct QuickAddSheet: View {
                     if let preselectedCategoryID,
                        categories.contains(where: { $0.id == preselectedCategoryID }) {
                         selectedCategoryID = preselectedCategoryID
-                    } else {
-                        selectedCategoryID = categories.first?.id
                     }
                 }
                 portion = PortionWheelControl.roundedToIncrement(portion, increment: portionIncrement)
@@ -2810,6 +2895,7 @@ struct QuickAddSheet: View {
                 }
             }
         }
+        .dynamicTypeSize(quickAddDynamicTypeSize)
     }
 
     @ViewBuilder
@@ -3024,6 +3110,17 @@ struct QuickAddSheet: View {
         amountText = correctedAmount.cleanNumber
         isSyncing = false
     }
+
+    private var quickAddDynamicTypeSize: DynamicTypeSize {
+        switch store.settings.fontSize {
+        case .small:
+            return .xSmall
+        case .standard:
+            return .large
+        case .large:
+            return .xLarge
+        }
+    }
 }
 
 private struct QuickAddMealSlotPicker: View {
@@ -3137,7 +3234,7 @@ private struct FoodLibraryPicker: View {
         self.units = units
         self.selectedCategoryID = selectedCategoryID
         _selectedFoodID = selectedFoodID
-        _filter = State(initialValue: selectedCategoryID == nil ? .all : .selectedCategory)
+        _filter = State(initialValue: .all)
     }
 
     var body: some View {
