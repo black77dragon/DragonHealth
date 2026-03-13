@@ -47,6 +47,7 @@ struct MealPhotoLogSheet: View {
     let foodItems: [FoodItem]
     let units: [FoodUnit]
     let preselectedMealSlotID: UUID?
+    let startWithCameraOnAppear: Bool
     let onSave: (MealSlot, [MealPhotoDraftItem]) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -59,6 +60,13 @@ struct MealPhotoLogSheet: View {
     @State private var showingCamera = false
     @State private var lowConfidenceReviewed = false
     @State private var analysisTask: Task<Void, Never>?
+    @State private var didAutoLaunchCamera = false
+    @ScaledMetric(relativeTo: .body) private var sectionSpacing = 18
+    @ScaledMetric(relativeTo: .body) private var cardPadding = 16
+    @ScaledMetric(relativeTo: .body) private var heroImageHeight = 250
+    @ScaledMetric(relativeTo: .body) private var buttonMinHeight = 52
+    @ScaledMetric(relativeTo: .body) private var chipMinWidth = 140
+    @ScaledMetric(relativeTo: .body) private var bottomBarHeight = 88
 
     private var availableFoods: [FoodItem] {
         foodItems.filter { !$0.kind.isComposite }
@@ -75,6 +83,10 @@ struct MealPhotoLogSheet: View {
         selectedImage != nil && !isAnalyzing && MealPhotoAIConfig.client() != nil
     }
 
+    private var hasDetectedItems: Bool {
+        !draftItems.isEmpty
+    }
+
     private var hasCamera: Bool {
         UIImagePickerController.isSourceTypeAvailable(.camera)
     }
@@ -87,136 +99,83 @@ struct MealPhotoLogSheet: View {
         !lowConfidenceItems.isEmpty && !lowConfidenceReviewed
     }
 
+    private var selectedMealSlotName: String {
+        guard let selectedMealSlotID,
+              let slot = mealSlots.first(where: { $0.id == selectedMealSlotID }) else {
+            return "Choose meal"
+        }
+        return slot.name
+    }
+
+    private var imageStatusTitle: String {
+        if isAnalyzing {
+            return "Analyzing your photo"
+        }
+        if hasDetectedItems {
+            return "Foods detected"
+        }
+        if selectedImage != nil {
+            return "Ready to detect"
+        }
+        return "Start with a meal photo"
+    }
+
+    private var imageStatusDetail: String {
+        if isAnalyzing {
+            return "Detection starts automatically after you capture or choose a photo."
+        }
+        if let parseError {
+            return parseError
+        }
+        if hasDetectedItems {
+            return "Review the detected foods, adjust anything needed, then save to \(selectedMealSlotName)."
+        }
+        if MealPhotoAIConfig.client() == nil {
+            return "OpenAI API key missing. Add it in Manage > Integrations > Meal Photo AI."
+        }
+        return "Take a photo or choose one from your library. DragonHealth will run AI detection automatically."
+    }
+
+    private var summaryColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: chipMinWidth), spacing: 10, alignment: .top)]
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    MealPhotoHeaderCard(
-                        selectedImage: selectedImage,
-                        draftCount: draftItems.count,
-                        lowConfidenceCount: lowConfidenceItems.count
-                    )
+                VStack(alignment: .leading, spacing: sectionSpacing) {
+                    photoActionRow
+                    photoHeroCard
+                    detectionStatusCard
 
-                    MealPhotoSectionCard(title: "Capture") {
-                        HStack(spacing: 12) {
-                            Button {
-                                showingCamera = true
-                            } label: {
-                                Label("Take Photo", systemImage: "camera")
-                            }
-                            .glassButton(.text)
-                            .disabled(!hasCamera)
-
-                            PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
-                                Label("Choose Photo", systemImage: "photo")
-                                    .glassLabel(.text)
-                            }
-                        }
+                    if selectedImage != nil {
+                        mealSlotCard
                     }
 
-                    MealPhotoSectionCard(title: "Analyze") {
-                        if MealPhotoAIConfig.client() == nil {
-                            Text("OpenAI API key missing. Add it in More > Data & integrations > Meal Photo AI.")
-                                .foregroundStyle(.red)
-                                .font(.footnote)
-                        }
+                    if hasDetectedItems {
+                        detectedFoodsSummaryCard
 
-                        Button {
-                            analyzePhoto()
-                        } label: {
-                            Label("AI Detect Foods", systemImage: "sparkles")
-                        }
-                        .glassButton(.text)
-                        .disabled(!canAnalyze)
-
-                        if isAnalyzing {
-                            ProgressView("Analyzing image...")
-                                .font(.footnote)
-                        }
-
-                        if let parseError {
-                            Text(parseError)
-                                .foregroundStyle(.red)
-                                .font(.footnote)
-                        }
-
-                        if !draftItems.isEmpty {
-                            Text("Detected \(draftItems.count) possible food item\(draftItems.count == 1 ? "" : "s").")
-                                .foregroundStyle(.secondary)
-                                .font(.footnote)
-                        }
-                    }
-
-                    if !draftItems.isEmpty {
                         if !lowConfidenceItems.isEmpty {
-                            MealPhotoSectionCard(title: "Review needed") {
-                                Text("Some detected items are low confidence. Confirm them before saving.")
-                                    .font(.footnote)
-                                    .foregroundStyle(.orange)
-
-                                ForEach(lowConfidenceItems) { item in
-                                    Text("\(item.foodText): \((item.confidence * 100).rounded().cleanNumber)% confidence (\(MealPhotoConfidenceRAG(confidence: item.confidence).label))")
-                                        .font(.caption)
-                                        .foregroundStyle(MealPhotoConfidenceRAG(confidence: item.confidence).color)
-                                }
-
-                                Toggle("I reviewed low-confidence items", isOn: $lowConfidenceReviewed)
-                            }
+                            reviewNeededCard
                         }
 
-                        MealPhotoSectionCard(title: "Review draft") {
-                            Picker("Meal Slot", selection: $selectedMealSlotID) {
-                                ForEach(mealSlots) { slot in
-                                    Text(slot.name).tag(Optional(slot.id))
-                                }
-                            }
-                            .pickerStyle(.segmented)
-
-                            ForEach($draftItems) { $item in
-                                MealPhotoDraftRow(
-                                    item: $item,
-                                    categories: categories,
-                                    foodItems: availableFoods,
-                                    units: units,
-                                    onDelete: {
-                                        deleteDraftItem(id: item.id)
-                                    }
-                                )
-                                .padding(14)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .fill(Color(.secondarySystemBackground))
-                                )
-                            }
-                        }
-                    } else {
-                        MealPhotoSectionCard(title: "Draft") {
-                            Text("No draft items yet. Start with a clear photo, then review the detected foods.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
+                        detectedFoodEditorSection
+                    } else if !isAnalyzing {
+                        emptyDraftCard
                     }
                 }
-                .padding(20)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, bottomBarHeight)
             }
-            .background(Color(.systemGroupedBackground))
+            .font(.body)
+            .scrollDismissesKeyboard(.interactively)
+            .dynamicTypeSize(.xSmall ... .large)
             .navigationTitle("Photo Log")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                         .glassButton(.text)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        guard let mealSlotID = selectedMealSlotID,
-                              let mealSlot = mealSlots.first(where: { $0.id == mealSlotID }) else {
-                            return
-                        }
-                        onSave(mealSlot, draftItems)
-                        dismiss()
-                    }
-                    .glassButton(.text)
-                    .disabled(!canSave)
                 }
             }
             .onAppear {
@@ -227,6 +186,10 @@ struct MealPhotoLogSheet: View {
                     } else {
                         selectedMealSlotID = mealSlots.first?.id
                     }
+                }
+                if startWithCameraOnAppear, !didAutoLaunchCamera, selectedImage == nil, hasCamera {
+                    didAutoLaunchCamera = true
+                    showingCamera = true
                 }
             }
             .onDisappear {
@@ -239,26 +202,300 @@ struct MealPhotoLogSheet: View {
             .sheet(isPresented: $showingCamera) {
                 CameraCaptureView(
                     onCapture: { image in
-                        analysisTask?.cancel()
-                        analysisTask = nil
-                        isAnalyzing = false
-                        selectedImage = image
-                        selectedPhotoItem = nil
+                        prepareForNewPhoto(image)
                         showingCamera = false
-                        draftItems = []
-                        parseError = nil
-                        lowConfidenceReviewed = false
                     },
                     onCancel: {
                         showingCamera = false
                     }
                 )
             }
+            .overlay(alignment: .bottom) {
+                saveBar
+            }
         }
     }
 
-    private func analyzePhoto() {
-        guard let selectedImage else { return }
+    private var photoActionRow: some View {
+        HStack(spacing: 12) {
+            takePhotoButton
+            choosePhotoButton
+        }
+    }
+
+    private var photoHeroCard: some View {
+        Group {
+            if let selectedImage {
+                Image(uiImage: selectedImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: heroImageHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Image(systemName: "camera.macro")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                    Text("Capture your food first")
+                        .font(.body.weight(.semibold))
+                    Text("AI starts automatically after a photo is available.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: heroImageHeight, alignment: .leading)
+                .padding(cardPadding)
+                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
+        }
+    }
+
+    private var takePhotoButton: some View {
+        Button {
+            showingCamera = true
+        } label: {
+            MealPhotoActionButtonLabel(
+                title: "Take Photo",
+                systemImage: "camera",
+                style: .primary,
+                minHeight: buttonMinHeight
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!hasCamera)
+    }
+
+    private var choosePhotoButton: some View {
+        PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
+            MealPhotoActionButtonLabel(
+                title: "Choose Photo",
+                systemImage: "photo",
+                style: .primary,
+                minHeight: buttonMinHeight
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var detectionStatusCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: isAnalyzing ? "sparkles.rectangle.stack" : "fork.knife.circle")
+                    .font(.title3)
+                    .foregroundStyle(parseError == nil ? Color.accentColor : Color.red)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(imageStatusTitle)
+                        .font(.body.weight(.semibold))
+                    Text(imageStatusDetail)
+                        .font(.footnote)
+                        .foregroundStyle(parseError == nil ? Color.secondary : Color.red)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if isAnalyzing {
+                ProgressView("Running AI food detection...")
+                    .font(.footnote)
+            } else if selectedImage != nil {
+                Button {
+                    analyzePhoto()
+                } label: {
+                    Label(hasDetectedItems ? "Run Again" : "Retry Detection", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(canAnalyze ? Color.accentColor : Color.secondary)
+                .disabled(!canAnalyze)
+            }
+        }
+        .padding(cardPadding)
+        .background(backgroundColor(forError: parseError != nil), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var mealSlotCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Meal")
+                .font(.body.weight(.semibold))
+            Picker("Meal Slot", selection: $selectedMealSlotID) {
+                ForEach(mealSlots) { slot in
+                    Text(slot.name).tag(Optional(slot.id))
+                }
+            }
+            .pickerStyle(.menu)
+            Text("Detected items will be saved into \(selectedMealSlotName).")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(cardPadding)
+        .background(backgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var detectedFoodsSummaryCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Detected Foods")
+                .font(.body.weight(.semibold))
+
+            Text("AI found \(draftItems.count) possible food item\(draftItems.count == 1 ? "" : "s"). Tap any card below to refine the details.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            LazyVGrid(columns: summaryColumns, alignment: .leading, spacing: 10) {
+                ForEach(draftItems) { item in
+                    MealPhotoDetectedSummaryChip(item: item)
+                }
+            }
+        }
+        .padding(cardPadding)
+        .background(backgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var reviewNeededCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Review Needed")
+                .font(.body.weight(.semibold))
+
+            Text("Some items are low confidence. Confirm those before saving.")
+                .font(.footnote)
+                .foregroundStyle(.orange)
+
+            ForEach(lowConfidenceItems) { item in
+                Text("\(item.foodText): \((item.confidence * 100).rounded().cleanNumber)% confidence (\(MealPhotoConfidenceRAG(confidence: item.confidence).label))")
+                    .font(.caption)
+                    .foregroundStyle(MealPhotoConfidenceRAG(confidence: item.confidence).color)
+            }
+
+            Toggle("I reviewed low-confidence items", isOn: $lowConfidenceReviewed)
+        }
+        .padding(cardPadding)
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var detectedFoodEditorSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Review Items")
+                .font(.body.weight(.semibold))
+
+            ForEach($draftItems) { $item in
+                MealPhotoDraftRow(
+                    item: $item,
+                    categories: categories,
+                    foodItems: availableFoods,
+                    units: units,
+                    onDelete: {
+                        deleteDraftItem(id: item.id)
+                    }
+                )
+                .padding(cardPadding)
+                .background(backgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
+        }
+    }
+
+    private var emptyDraftCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No detected items yet")
+                .font(.body.weight(.semibold))
+            Text("Choose a photo to let AI identify the foods and prefill the draft for review.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(cardPadding)
+        .background(backgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var saveBar: some View {
+        VStack(spacing: 8) {
+            if selectedImage != nil {
+                Menu {
+                    ForEach(mealSlots) { slot in
+                        Button {
+                            selectedMealSlotID = slot.id
+                        } label: {
+                            if selectedMealSlotID == slot.id {
+                                Label(slot.name, systemImage: "checkmark")
+                            } else {
+                                Text(slot.name)
+                            }
+                        }
+                    }
+                } label: {
+                    MealPhotoActionButtonLabel(
+                        title: "Meal timing: \(selectedMealSlotName)",
+                        systemImage: "clock",
+                        style: .secondary,
+                        minHeight: buttonMinHeight
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button {
+                guard let mealSlotID = selectedMealSlotID,
+                      let mealSlot = mealSlots.first(where: { $0.id == mealSlotID }) else {
+                    return
+                }
+                onSave(mealSlot, draftItems)
+                dismiss()
+            } label: {
+                MealPhotoActionButtonLabel(
+                    title: hasDetectedItems ? "Save to \(selectedMealSlotName)" : "Save",
+                    systemImage: "checkmark",
+                    style: .primary,
+                    minHeight: buttonMinHeight
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSave)
+
+            if !canSave, hasDetectedItems {
+                Text(saveHintText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 6)
+        .background(Color.clear)
+        .ignoresSafeArea(edges: .bottom)
+    }
+
+    private var saveHintText: String {
+        if requiresLowConfidenceReview {
+            return "Review low-confidence items before saving."
+        }
+        if draftItems.contains(where: { !isItemValid($0) }) {
+            return "Complete each detected item before saving."
+        }
+        if selectedMealSlotID == nil {
+            return "Choose a meal slot before saving."
+        }
+        return "Save is unavailable."
+    }
+
+    private func backgroundColor(forError isError: Bool = false) -> Color {
+        isError ? Color.red.opacity(0.08) : Color(.secondarySystemGroupedBackground)
+    }
+
+    @MainActor
+    private func prepareForNewPhoto(_ image: UIImage) {
+        analysisTask?.cancel()
+        analysisTask = nil
+        isAnalyzing = false
+        selectedImage = image
+        selectedPhotoItem = nil
+        draftItems = []
+        parseError = nil
+        lowConfidenceReviewed = false
+        analyzePhoto(image)
+    }
+
+    @MainActor
+    private func analyzePhoto(_ image: UIImage? = nil) {
+        guard let image = image ?? selectedImage else { return }
         guard let client = MealPhotoAIConfig.client() else {
             parseError = "OpenAI API key missing."
             return
@@ -271,7 +508,7 @@ struct MealPhotoLogSheet: View {
         analysisTask = Task {
             do {
                 let detections = try await client.analyzeMeal(
-                    image: selectedImage,
+                    image: image,
                     foodNames: availableFoods.map(\.name),
                     categoryNames: categories.map(\.name)
                 )
@@ -324,10 +561,7 @@ struct MealPhotoLogSheet: View {
                 return
             }
             await MainActor.run {
-                selectedImage = image
-                draftItems = []
-                parseError = nil
-                lowConfidenceReviewed = false
+                prepareForNewPhoto(image)
             }
         } catch {
             await MainActor.run {
@@ -366,95 +600,89 @@ struct MealPhotoLogSheet: View {
     }
 }
 
-private struct MealPhotoHeaderCard: View {
-    let selectedImage: UIImage?
-    let draftCount: Int
-    let lowConfidenceCount: Int
+private struct MealPhotoDetectedSummaryChip: View {
+    let item: MealPhotoDraftItem
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let selectedImage {
-                Image(uiImage: selectedImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            } else {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
-                    .frame(maxWidth: .infinity, minHeight: 180)
-                    .overlay {
-                        VStack(spacing: 8) {
-                            Image(systemName: "camera.macro")
-                                .font(.system(size: 28))
-                                .foregroundStyle(.secondary)
-                            Text("Take or choose a meal photo to start.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-            }
-
-            HStack(spacing: 12) {
-                MealPhotoMetric(label: "Detected", value: "\(draftCount)")
-                MealPhotoMetric(label: "Review", value: "\(lowConfidenceCount)")
-            }
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.orange.opacity(0.15), Color.red.opacity(0.08), Color(.secondarySystemBackground)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+    private var rag: MealPhotoConfidenceRAG {
+        MealPhotoConfidenceRAG(confidence: item.confidence)
     }
-}
-
-private struct MealPhotoMetric: View {
-    let label: String
-    let value: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.subheadline.weight(.semibold))
+        VStack(alignment: .leading, spacing: 6) {
+            Text(item.foodText)
+                .font(.footnote.weight(.semibold))
+                .lineLimit(2)
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(rag.color)
+                    .frame(width: 8, height: 8)
+                Text("\((item.confidence * 100).rounded().cleanNumber)% \(rag.label)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.thinMaterial)
-        )
+        .background(rag.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
-private struct MealPhotoSectionCard<Content: View>: View {
-    let title: String
-    let content: Content
+private enum MealPhotoActionButtonStyle {
+    case primary
+    case secondary
+}
 
-    init(title: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.content = content()
-    }
+private struct MealPhotoActionButtonLabel: View {
+    let title: String
+    let systemImage: String
+    let style: MealPhotoActionButtonStyle
+    let minHeight: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.body.weight(.semibold))
             Text(title)
-                .font(.headline)
-            content
+                .font(.body.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
         }
-        .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color(.systemBackground))
+        .foregroundStyle(foregroundColor)
+        .frame(maxWidth: .infinity, minHeight: minHeight)
+        .padding(.horizontal, 12)
+        .background(background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(borderColor, lineWidth: style == .secondary ? 1 : 0)
         )
+    }
+
+    private var foregroundColor: Color {
+        switch style {
+        case .primary:
+            return .white
+        case .secondary:
+            return .primary
+        }
+    }
+
+    private var background: Color {
+        switch style {
+        case .primary:
+            return Color.accentColor
+        case .secondary:
+            return Color(.secondarySystemGroupedBackground)
+        }
+    }
+
+    private var borderColor: Color {
+        switch style {
+        case .primary:
+            return .clear
+        case .secondary:
+            return Color(.separator).opacity(0.25)
+        }
     }
 }
 

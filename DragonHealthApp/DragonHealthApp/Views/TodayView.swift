@@ -12,16 +12,14 @@ struct TodayView: View {
     @State private var scoreSummary: DailyScoreSummary?
     @State private var showingScoreExplain = false
     @State private var showingQuickAdd = false
-    @State private var showingVoiceLog = false
     @State private var showingPhotoLog = false
+    @State private var photoLogStartsWithCamera = false
     @State private var quickAddPrefillCategoryID: UUID?
     @State private var quickAddPrefillMealSlotID: UUID?
     @State private var editingEntry: DailyLogEntry?
     @State private var viewingEntry: DailyLogEntry?
     @State private var saveConfirmationMessage: String?
     @State private var saveConfirmationTask: Task<Void, Never>?
-    @State private var showingDailyOverview = false
-    @State private var showingDetailedLog = false
     @AppStorage("today.categoryDisplayStyle") private var categoryDisplayStyleRaw: String = CategoryDisplayStyle.compactRings.rawValue
     @AppStorage("today.mealDisplayStyle") private var mealDisplayStyleRaw: String = MealDisplayStyle.miniCards.rawValue
     @AppStorage("today.quickAddStyle") private var quickAddStyleRaw: String = QuickAddStyle.standard.rawValue
@@ -38,140 +36,98 @@ struct TodayView: View {
     private var quickAddStyle: QuickAddStyle {
         QuickAddStyle(rawValue: quickAddStyleRaw) ?? .standard
     }
-
-    private var visibleCategories: [Core.Category] {
-        store.categories.filter { $0.isEnabled }
+    private var currentMealSlotID: UUID? {
+        store.currentMealSlotID()
     }
-
-    private var mealEntries: [DailyLogEntry] {
-        dailyLog?.entries ?? []
+    private var currentMealSlotName: String? {
+        guard let currentMealSlotID else { return nil }
+        return store.mealSlots.first(where: { $0.id == currentMealSlotID })?.name
     }
-
-    private var currentMealSlot: MealSlot? {
-        guard let mealSlotID = store.currentMealSlotID() else { return nil }
-        return store.mealSlots.first(where: { $0.id == mealSlotID })
-    }
-
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                TodayHeroCard(
+            VStack(alignment: .leading, spacing: 16) {
+                let visibleCategories = store.categories.filter { $0.isEnabled }
+                let mealEntries = dailyLog?.entries ?? []
+
+                TodayHeaderView(
                     adherence: adherence,
                     scoreSummary: scoreSummary,
                     categories: store.categories,
                     totals: totals,
-                    currentMealSlotName: currentMealSlot?.name,
                     onExplainScore: scoreSummary == nil ? nil : { showingScoreExplain = true }
                 )
 
-                TodayQuickActionsStrip(
-                    currentMealSlotName: currentMealSlot?.name,
-                    onQuickAdd: { openQuickAdd() },
-                    onVoiceLog: { showingVoiceLog = true },
-                    onPhotoLog: { showingPhotoLog = true }
+                TodayPhotoHeroCard(
+                    mealSlotName: currentMealSlotName,
+                    onTakePhoto: {
+                        openPhotoLog()
+                    },
+                    onQuickAdd: {
+                        openQuickAdd()
+                    }
                 )
 
                 if !visibleCategories.isEmpty {
-                    TodaySectionBlock(
-                        title: "Act now",
-                        subtitle: "Focus on the next decision, not the whole day."
-                    ) {
-                        VStack(alignment: .leading, spacing: 14) {
-                            TodayPriorityStackView(
-                                categories: visibleCategories,
-                                totals: totals,
-                                scoreSummary: scoreSummary,
-                                onQuickAddAmount: { categoryID, amount in
-                                    Task { await logQuickAmount(categoryID: categoryID, amount: amount) }
-                                },
-                                onLogNow: { categoryID in
-                                    openQuickAdd(categoryID: categoryID)
-                                }
-                            )
-
-                            TodayMealTimelineRail(
-                                mealSlots: store.mealSlots,
-                                entries: mealEntries,
-                                currentMealSlotID: currentMealSlot?.id,
-                                onQuickAddForMeal: { mealSlotID in
-                                    openQuickAdd(categoryID: nil, mealSlotID: mealSlotID)
-                                }
-                            )
+                    TodayPriorityStackView(
+                        categories: visibleCategories,
+                        totals: totals,
+                        scoreSummary: scoreSummary,
+                        onQuickAddAmount: { categoryID, amount in
+                            Task { await logQuickAmount(categoryID: categoryID, amount: amount) }
+                        },
+                        onLogNow: { categoryID in
+                            openQuickAdd(categoryID: categoryID)
                         }
-                    }
+                    )
+
+                    TodayMealTimelineRail(
+                        mealSlots: store.mealSlots,
+                        entries: mealEntries,
+                        currentMealSlotID: currentMealSlotID,
+                        onQuickAddForMeal: { mealSlotID in
+                            openQuickAdd(categoryID: nil, mealSlotID: mealSlotID)
+                        }
+                    )
                 }
 
                 if visibleCategories.isEmpty {
-                    TodayEmptyStateCard(
-                        title: "No categories configured yet",
-                        message: "Set up your tracking categories in More before you start logging today."
-                    )
+                    Text("No categories configured yet.")
+                        .foregroundStyle(.secondary)
                 } else {
-                    TodaySectionBlock(
-                        title: "Progress",
-                        subtitle: "A calm overview of where today stands."
-                    ) {
-                        CategoryOverviewGrid(
-                            categories: visibleCategories,
-                            totals: totals,
-                            style: categoryDisplayStyle
-                        ) { category in
-                            CategoryDayDetailView(category: category)
+                    CategoryOverviewGrid(
+                        categories: visibleCategories,
+                        totals: totals,
+                        style: categoryDisplayStyle
+                    ) { category in
+                        CategoryDayDetailView(category: category)
+                    }
+                }
+
+                TodayMealBreakdownView(
+                    mealSlots: store.mealSlots,
+                    entries: mealEntries,
+                    categories: store.categories,
+                    style: mealDisplayStyle
+                )
+
+                TodayMealDetailsSection(
+                    mealSlots: store.mealSlots,
+                    entries: mealEntries,
+                    categories: store.categories,
+                    foodItems: store.foodItems,
+                    onViewDetails: { entry in
+                        viewingEntry = entry
+                    },
+                    onEdit: { entry in
+                        editingEntry = entry
+                    },
+                    onDelete: { entry in
+                        Task {
+                            await store.deleteEntry(entry)
+                            await loadToday()
                         }
                     }
-                }
-
-                TodaySectionBlock(
-                    title: "Overview",
-                    subtitle: "Open the broader daily picture only when you need it."
-                ) {
-                    DisclosureGroup(isExpanded: $showingDailyOverview) {
-                        TodayMealBreakdownView(
-                            mealSlots: store.mealSlots,
-                            entries: mealEntries,
-                            categories: store.categories,
-                            style: mealDisplayStyle
-                        )
-                        .padding(.top, 10)
-                    } label: {
-                        TodayDisclosureLabel(
-                            title: "Meal overview",
-                            subtitle: "See distribution by meal without opening the full log."
-                        )
-                    }
-                }
-
-                TodaySectionBlock(
-                    title: "Detailed log",
-                    subtitle: "Everything is still here, just not shouting for attention."
-                ) {
-                    DisclosureGroup(isExpanded: $showingDetailedLog) {
-                        TodayMealDetailsSection(
-                            mealSlots: store.mealSlots,
-                            entries: mealEntries,
-                            categories: store.categories,
-                            foodItems: store.foodItems,
-                            onViewDetails: { entry in
-                                viewingEntry = entry
-                            },
-                            onEdit: { entry in
-                                editingEntry = entry
-                            },
-                            onDelete: { entry in
-                                Task {
-                                    await store.deleteEntry(entry)
-                                    await loadToday()
-                                }
-                            }
-                        )
-                        .padding(.top, 10)
-                    } label: {
-                        TodayDisclosureLabel(
-                            title: "Entries by meal",
-                            subtitle: mealEntries.isEmpty ? "No entries yet for today." : "\(mealEntries.count) entries logged today."
-                        )
-                    }
-                }
+                )
             }
             .padding(20)
         }
@@ -181,14 +137,25 @@ struct TodayView: View {
                 TodayNavTitleView(date: store.currentDay)
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    openQuickAdd()
-                } label: {
-                    Image(systemName: "plus")
-                        .glassLabel(.icon)
+                HStack(spacing: 6) {
+                    Button {
+                        openQuickAdd()
+                    } label: {
+                        Image(systemName: "plus")
+                            .glassLabel(.icon)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Quick Add")
+
+                    Button {
+                        openPhotoLog(startWithCamera: true)
+                    } label: {
+                        Image(systemName: "camera")
+                            .glassLabel(.icon)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Photo Log")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Quick Add")
             }
         }
         .sheet(isPresented: $showingScoreExplain) {
@@ -230,49 +197,14 @@ struct TodayView: View {
                 }
             )
         }
-        .sheet(isPresented: $showingVoiceLog) {
-            VoiceLogSheet(
-                categories: store.categories.filter { $0.isEnabled },
-                mealSlots: store.mealSlots,
-                foodItems: store.foodItems.filter { !$0.kind.isComposite },
-                units: store.units,
-                onSave: { mealSlot, items, _ in
-                    Task {
-                        var savedCount = 0
-                        for item in items {
-                            guard let categoryID = item.categoryID,
-                                  let portion = item.portion else { continue }
-                            let category = store.categories.first(where: { $0.id == categoryID })
-                            let increment = DrinkRules.portionIncrement(for: category)
-                            let trimmedNotes = item.notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                            let notes = trimmedNotes.isEmpty && item.matchedFoodID == nil ? item.foodText : trimmedNotes
-                            await store.logPortion(
-                                date: Date(),
-                                mealSlotID: mealSlot.id,
-                                categoryID: categoryID,
-                                portion: Portion(portion, increment: increment),
-                                amountValue: item.amountValue,
-                                amountUnitID: item.amountUnitID,
-                                notes: notes.isEmpty ? nil : notes,
-                                foodItemID: item.matchedFoodID
-                            )
-                            savedCount += 1
-                        }
-                        await loadToday()
-                        if savedCount > 0 {
-                            showSaveConfirmation("data is successfully stored")
-                        }
-                    }
-                }
-            )
-        }
         .sheet(isPresented: $showingPhotoLog) {
             MealPhotoLogSheet(
                 categories: store.categories.filter { $0.isEnabled },
                 mealSlots: store.mealSlots,
                 foodItems: store.foodItems.filter { !$0.kind.isComposite },
                 units: store.units,
-                preselectedMealSlotID: store.currentMealSlotID(),
+                preselectedMealSlotID: currentMealSlotID,
+                startWithCameraOnAppear: photoLogStartsWithCamera,
                 onSave: { mealSlot, items in
                     Task {
                         var savedCount = 0
@@ -302,6 +234,11 @@ struct TodayView: View {
                     }
                 }
             )
+        }
+        .onChange(of: showingPhotoLog) { _, isPresented in
+            if !isPresented {
+                photoLogStartsWithCamera = false
+            }
         }
         .sheet(item: $editingEntry) { entry in
             EntryEditSheet(
@@ -384,14 +321,20 @@ struct TodayView: View {
     @MainActor
     private func openQuickAdd(categoryID: UUID? = nil, mealSlotID: UUID? = nil) {
         quickAddPrefillCategoryID = categoryID
-        quickAddPrefillMealSlotID = mealSlotID ?? store.currentMealSlotID()
+        quickAddPrefillMealSlotID = mealSlotID ?? currentMealSlotID
         showingQuickAdd = true
+    }
+
+    @MainActor
+    private func openPhotoLog(startWithCamera: Bool = false) {
+        photoLogStartsWithCamera = startWithCamera
+        showingPhotoLog = true
     }
 
     private func logQuickAmount(categoryID: UUID, amount: Double) async {
         guard amount > 0 else { return }
         guard let category = store.categories.first(where: { $0.id == categoryID }) else { return }
-        guard let mealSlotID = store.currentMealSlotID() ?? store.mealSlots.first?.id else { return }
+        guard let mealSlotID = currentMealSlotID ?? store.mealSlots.first?.id else { return }
 
         let portion = Portion(amount, increment: DrinkRules.portionIncrement(for: category))
         await store.logPortion(
@@ -402,6 +345,108 @@ struct TodayView: View {
             notes: nil
         )
         await loadToday()
+    }
+}
+
+private struct TodayPhotoHeroCard: View {
+    let mealSlotName: String?
+    let onTakePhoto: () -> Void
+    let onQuickAdd: () -> Void
+
+    private var primaryTitle: String {
+        if let mealSlotName {
+            return "Add from a Photo for \(mealSlotName)"
+        }
+        return "Add from a Photo"
+    }
+
+    private var mealContext: String {
+        if let mealSlotName {
+            return "Ready to log \(mealSlotName.lowercased())."
+        }
+        return "Photo logging is the fastest way to add food."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("FASTEST WAY TO LOG")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.accentColor)
+
+                    Text("Add food from a photo")
+                        .font(.title3.weight(.semibold))
+
+                    Text("Snap your meal, review the detected foods, and save it into Today in a few taps.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(12)
+                    .background(
+                        Circle()
+                            .fill(Color.white.opacity(0.7))
+                    )
+            }
+
+            Label(mealContext, systemImage: "clock")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            Button(action: onTakePhoto) {
+                HStack(spacing: 8) {
+                    Image(systemName: "photo")
+                    Text(primaryTitle)
+                    Spacer()
+                    Image(systemName: "arrow.right")
+                        .font(.footnote.weight(.bold))
+                }
+                .font(.headline)
+                .foregroundStyle(Color.white)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .padding(.horizontal, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.accentColor)
+                )
+            }
+            .buttonStyle(.plain)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .accessibilityHint("Opens the meal photo logging flow.")
+
+            Button(action: onQuickAdd) {
+                Label("Use Quick Add instead", systemImage: "plus")
+            }
+            .glassButton(.text)
+            .accessibilityHint("Opens manual food logging.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.accentColor.opacity(0.18),
+                            Color.accentColor.opacity(0.08),
+                            Color(.secondarySystemBackground)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.white.opacity(0.5), lineWidth: 1)
+        )
     }
 }
 
@@ -445,288 +490,6 @@ private struct TodayNavTitleView: View {
         .lineLimit(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Today, \(TodayDateFormatter.string(from: date))")
-    }
-}
-
-private struct TodayHeroCard: View {
-    let adherence: DailyAdherenceSummary?
-    let scoreSummary: DailyScoreSummary?
-    let categories: [Core.Category]
-    let totals: [UUID: Double]
-    let currentMealSlotName: String?
-    let onExplainScore: (() -> Void)?
-
-    private var enabledCategories: [Core.Category] {
-        categories.filter { $0.isEnabled }
-    }
-
-    private var metCount: Int {
-        adherence?.categoryResults.filter(\.targetMet).count ?? 0
-    }
-
-    private var nextMove: String {
-        guard let adherence else {
-            return "Start with one quick log to establish momentum."
-        }
-
-        let categoriesByID = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
-        let biggestGap = adherence.categoryResults
-            .filter { !$0.targetMet }
-            .compactMap { result -> (Core.Category, Double, Bool)? in
-                guard let category = categoriesByID[result.categoryID] else { return nil }
-                let missing = missingAmount(rule: category.targetRule, total: result.total)
-                let excess = excessAmount(rule: category.targetRule, total: result.total)
-                if missing > 0 { return (category, missing, true) }
-                if excess > 0 { return (category, excess, false) }
-                return nil
-            }
-            .max(by: { $0.1 < $1.1 })
-
-        guard let biggestGap else {
-            return "You are on track. Keep the next meal simple and consistent."
-        }
-
-        if biggestGap.2 {
-            return "Best next move: add \(biggestGap.0.name.lowercased()) at your next meal."
-        }
-        return "Best next move: hold \(biggestGap.0.name.lowercased()) steady for the rest of today."
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Today at a glance")
-                        .font(.headline)
-                    Text(nextMove)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if let scoreSummary {
-                    VStack(alignment: .trailing, spacing: 8) {
-                        ScoreBadge(score: scoreSummary.overallScore)
-                        if let onExplainScore {
-                            Button("Score details") {
-                                onExplainScore()
-                            }
-                            .glassButton(.compact)
-                            .font(.caption)
-                        }
-                    }
-                }
-            }
-
-            HStack(spacing: 12) {
-                TodayHeroMetric(
-                    title: "Targets met",
-                    value: "\(metCount)/\(max(enabledCategories.count, 1))",
-                    detail: enabledCategories.isEmpty ? "Configure goals" : "Across enabled categories"
-                )
-                TodayHeroMetric(
-                    title: "Current meal",
-                    value: currentMealSlotName ?? "Auto",
-                    detail: "Default context for quick logging"
-                )
-            }
-        }
-        .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.accentColor.opacity(0.18), Color.orange.opacity(0.08), Color(.secondarySystemBackground)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.white.opacity(0.45), lineWidth: 0.8)
-        )
-    }
-}
-
-private struct TodayHeroMetric: View {
-    let title: String
-    let value: String
-    let detail: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .tracking(1.0)
-            Text(value)
-                .font(.title3.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Color(.systemBackground).opacity(0.65), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-}
-
-private struct TodayQuickActionsStrip: View {
-    let currentMealSlotName: String?
-    let onQuickAdd: () -> Void
-    let onVoiceLog: () -> Void
-    let onPhotoLog: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Fast lane")
-                .font(.headline)
-
-            HStack(spacing: 12) {
-                TodayQuickActionButton(title: "Quick Add", subtitle: currentMealSlotName ?? "Auto meal", systemImage: "plus.circle.fill", tint: .blue, action: onQuickAdd)
-                TodayQuickActionButton(title: "Voice", subtitle: "Speak a draft", systemImage: "waveform.circle.fill", tint: .teal, action: onVoiceLog)
-            }
-
-            HStack(spacing: 12) {
-                TodayQuickActionButton(title: "Photo", subtitle: "Review from image", systemImage: "camera.circle.fill", tint: .orange, action: onPhotoLog)
-                TodayQuickActionLink(title: "Night Guard", subtitle: "Evening routine", systemImage: "moon.stars.fill", tint: .indigo) {
-                    NightGuardView()
-                }
-            }
-        }
-    }
-}
-
-private struct TodayQuickActionButton: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let tint: Color
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            TodayQuickActionTile(title: title, subtitle: subtitle, systemImage: systemImage, tint: tint)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct TodayQuickActionLink<Destination: View>: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let tint: Color
-    let destination: Destination
-
-    init(title: String, subtitle: String, systemImage: String, tint: Color, @ViewBuilder destination: () -> Destination) {
-        self.title = title
-        self.subtitle = subtitle
-        self.systemImage = systemImage
-        self.tint = tint
-        self.destination = destination()
-    }
-
-    var body: some View {
-        NavigationLink {
-            destination
-        } label: {
-            TodayQuickActionTile(title: title, subtitle: subtitle, systemImage: systemImage, tint: tint)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct TodayQuickActionTile: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let tint: Color
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.title2)
-                .foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer()
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
-    }
-}
-
-private struct TodaySectionBlock<Content: View>: View {
-    let title: String
-    let subtitle: String
-    let content: Content
-
-    init(title: String, subtitle: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.subtitle = subtitle
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.headline)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            content
-        }
-    }
-}
-
-private struct TodayEmptyStateCard: View {
-    let title: String
-    let message: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.headline)
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
-    }
-}
-
-private struct TodayDisclosureLabel: View {
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -2858,6 +2621,7 @@ struct QuickAddSheet: View {
     let onSave: (MealSlot, Core.Category, Double, Double?, UUID?, String?, UUID?) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: AppStore
     @State private var selectedCategoryID: UUID?
     @State private var selectedMealSlotID: UUID?
     @State private var selectedFoodID: UUID?
@@ -2867,7 +2631,6 @@ struct QuickAddSheet: View {
     @State private var drinkUnitID: UUID?
     @State private var isSyncing = false
     @State private var notes: String = ""
-    @State private var showingAdvanced = false
 
     init(
         categories: [Core.Category],
@@ -2995,15 +2758,6 @@ struct QuickAddSheet: View {
         return mealSlots.first(where: { $0.id == selectedMealSlotID })?.name
     }
 
-    private var favoriteFoods: [FoodItem] {
-        Array(availableFoodItems.filter(\.isFavorite).prefix(6))
-    }
-
-    private var suggestedFoods: [FoodItem] {
-        let base = favoriteFoods.isEmpty ? availableFoodItems : favoriteFoods
-        return Array(base.prefix(6))
-    }
-
     private var mealSelectionSummary: String {
         if let selectedMealSlotName {
             return selectedMealSlotName
@@ -3035,58 +2789,21 @@ struct QuickAddSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    QuickAddHeaderCard(
-                        contextDate: contextDate,
-                        mealSummary: mealSelectionSummary,
-                        categorySummary: categorySelectionSummary,
-                        foodSummary: selectedFoodItem?.name
-                    )
-                    .listRowBackground(Color.clear)
-                }
-
-                if !suggestedFoods.isEmpty {
-                    Section("Fast picks") {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 10) {
-                                ForEach(suggestedFoods) { item in
-                                    QuickAddFoodChip(
-                                        item: item,
-                                        categoryName: categories.first(where: { $0.id == item.categoryID })?.name ?? "Food",
-                                        isSelected: selectedFoodID == item.id
-                                    ) {
-                                        selectedFoodID = item.id
-                                    }
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            Form {
+                if let contextDate {
+                    Section("Day") {
+                        Text(contextDate, style: .date)
+                            .font(.headline)
                     }
                 }
 
                 selectorSection
-                portionSection
 
-                Section {
-                    DisclosureGroup(isExpanded: $showingAdvanced) {
-                        VStack(spacing: 0) {
-                            inputModeSection
-                            amountSection
-                            notesSection
-                        }
-                    } label: {
-                        QuickAddDisclosureLabel(
-                            title: "More details",
-                            subtitle: amountInputEnabled ? "Exact amount, units, and notes" : "Notes"
-                        )
-                    }
-                }
-                .listRowBackground(Color.clear)
+                inputModeSection
+                portionSection
+                amountSection
+                notesSection
             }
-            .scrollContentBackground(.hidden)
-            .background(Color(.systemGroupedBackground))
             .navigationTitle("Quick Add")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -3148,8 +2865,6 @@ struct QuickAddSheet: View {
                     if let preselectedCategoryID,
                        categories.contains(where: { $0.id == preselectedCategoryID }) {
                         selectedCategoryID = preselectedCategoryID
-                    } else {
-                        selectedCategoryID = categories.first?.id
                     }
                 }
                 portion = PortionWheelControl.roundedToIncrement(portion, increment: portionIncrement)
@@ -3180,11 +2895,12 @@ struct QuickAddSheet: View {
                 }
             }
         }
+        .dynamicTypeSize(quickAddDynamicTypeSize)
     }
 
     @ViewBuilder
     private var selectorSection: some View {
-        Section("What are you logging?") {
+        Section {
             NavigationLink {
                 QuickAddMealSlotPicker(
                     mealSlots: mealSlots,
@@ -3241,10 +2957,7 @@ struct QuickAddSheet: View {
 
     @ViewBuilder
     private var inputModeSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Input Mode")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.secondary)
+        Section("Input Mode") {
             Picker("Input Mode", selection: $inputMode) {
                 ForEach(EntryInputMode.allCases) { mode in
                     Text(mode.label).tag(mode)
@@ -3262,12 +2975,7 @@ struct QuickAddSheet: View {
 
     @ViewBuilder
     private var portionSection: some View {
-        Section("How much?") {
-            QuickAddPortionPresets(
-                portion: $portion,
-                increment: portionIncrement,
-                accentColor: selectedCategoryColor
-            )
+        Section("Portion") {
             PortionWheelControl(portion: $portion, accentColor: selectedCategoryColor, increment: portionIncrement)
                 .disabled(inputMode == .amount && amountInputEnabled)
         }
@@ -3275,10 +2983,7 @@ struct QuickAddSheet: View {
 
     @ViewBuilder
     private var amountSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Amount")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.secondary)
+        Section("Amount") {
             HStack {
                 TextField("0", text: $amountText)
                     .keyboardType(activeUnit?.allowsDecimal == false ? .numberPad : .decimalPad)
@@ -3307,10 +3012,7 @@ struct QuickAddSheet: View {
 
     @ViewBuilder
     private var notesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Notes")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.secondary)
+        Section("Notes") {
             TextField("Add a note", text: $notes, axis: .vertical)
                 .lineLimit(3, reservesSpace: true)
         }
@@ -3408,138 +3110,15 @@ struct QuickAddSheet: View {
         amountText = correctedAmount.cleanNumber
         isSyncing = false
     }
-}
 
-private struct QuickAddHeaderCard: View {
-    let contextDate: Date?
-    let mealSummary: String
-    let categorySummary: String
-    let foodSummary: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Quick log")
-                .font(.caption.weight(.semibold))
-                .textCase(.uppercase)
-                .foregroundStyle(.secondary)
-            Text("Log the common case first. Open more details only when you need them.")
-                .font(.title3.weight(.semibold))
-            HStack(spacing: 12) {
-                QuickAddHeaderMetric(label: "Meal", value: mealSummary)
-                QuickAddHeaderMetric(label: "Category", value: categorySummary)
-            }
-            if let foodSummary {
-                QuickAddHeaderMetric(label: "Food", value: foodSummary)
-            }
-            if let contextDate {
-                Text(contextDate.formatted(date: .abbreviated, time: .omitted))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.blue.opacity(0.14), Color.green.opacity(0.08), Color(.secondarySystemBackground)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-    }
-}
-
-private struct QuickAddHeaderMetric: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.thinMaterial)
-        )
-    }
-}
-
-private struct QuickAddFoodChip: View {
-    let item: FoodItem
-    let categoryName: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.name)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Text(categoryName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(width: 140, alignment: .leading)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground))
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct QuickAddPortionPresets: View {
-    @Binding var portion: Double
-    let increment: Double
-    let accentColor: Color
-
-    private let presets: [Double] = [0.5, 1.0, 1.5, 2.0]
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(presets, id: \.self) { value in
-                let roundedValue = PortionWheelControl.roundedToIncrement(value, increment: increment)
-                Button {
-                    portion = roundedValue
-                } label: {
-                    Text("\(roundedValue.cleanNumber)x")
-                        .font(.subheadline.weight(.medium))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(abs(portion - roundedValue) < 0.001 ? accentColor.opacity(0.18) : Color(.secondarySystemBackground))
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}
-
-private struct QuickAddDisclosureLabel: View {
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.headline)
-            Text(subtitle)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+    private var quickAddDynamicTypeSize: DynamicTypeSize {
+        switch store.settings.fontSize {
+        case .small:
+            return .xSmall
+        case .standard:
+            return .large
+        case .large:
+            return .xLarge
         }
     }
 }
@@ -3655,7 +3234,7 @@ private struct FoodLibraryPicker: View {
         self.units = units
         self.selectedCategoryID = selectedCategoryID
         _selectedFoodID = selectedFoodID
-        _filter = State(initialValue: selectedCategoryID == nil ? .all : .selectedCategory)
+        _filter = State(initialValue: .all)
     }
 
     var body: some View {

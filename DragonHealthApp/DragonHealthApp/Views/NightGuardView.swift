@@ -489,7 +489,7 @@ struct NightGuardView: View {
 
     private var reviewCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Night Review")
+            Text("Previous Night Review")
                 .font(.headline)
             Text("Record success for last night, add a short note, and adjust any previous night.")
                 .font(.caption)
@@ -508,6 +508,15 @@ struct NightGuardView: View {
             TextField("Short note (optional)", text: $reviewNote, axis: .vertical)
                 .lineLimit(1...3)
                 .focused($isReviewNoteFocused)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.tertiarySystemBackground))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
 
             HStack(spacing: 10) {
                 Button {
