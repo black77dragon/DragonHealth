@@ -25,6 +25,7 @@ struct DailyHubView: View {
 
     var body: some View {
         content
+            .navigationTitle("Journal")
             .safeAreaInset(edge: .top) {
                 sectionPicker
             }
@@ -42,7 +43,7 @@ struct DailyHubView: View {
 
     private var sectionPicker: some View {
         VStack(spacing: 0) {
-            Picker("Daily view", selection: Binding(
+            Picker("Journal section", selection: Binding(
                 get: { selectedSection },
                 set: { selectedSectionRaw = $0.rawValue }
             )) {
@@ -57,6 +58,6 @@ struct DailyHubView: View {
 
             Divider()
         }
-        .background(.ultraThinMaterial)
+        .background(ZenStyle.pageBackground)
     }
 }

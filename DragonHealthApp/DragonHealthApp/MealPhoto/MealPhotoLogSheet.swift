@@ -41,6 +41,13 @@ private enum MealPhotoConfidenceRAG {
     }
 }
 
+private struct MealPhotoLibraryEntryContext: Identifiable {
+    let draftID: UUID
+    let suggestionRequest: FoodDetailSuggestionRequest
+
+    var id: UUID { draftID }
+}
+
 struct MealPhotoLogSheet: View {
     let categories: [Core.Category]
     let mealSlots: [MealSlot]
@@ -51,6 +58,7 @@ struct MealPhotoLogSheet: View {
     let onSave: (MealSlot, [MealPhotoDraftItem]) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: AppStore
     @State private var selectedMealSlotID: UUID?
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
@@ -61,6 +69,10 @@ struct MealPhotoLogSheet: View {
     @State private var lowConfidenceReviewed = false
     @State private var analysisTask: Task<Void, Never>?
     @State private var didAutoLaunchCamera = false
+    @State private var libraryOfferContext: MealPhotoLibraryEntryContext?
+    @State private var pendingLibraryEntry: MealPhotoLibraryEntryContext?
+    @State private var libraryEntryErrorMessage: String?
+    @State private var showingLibraryEntryError = false
     @ScaledMetric(relativeTo: .body) private var sectionSpacing = 18
     @ScaledMetric(relativeTo: .body) private var cardPadding = 16
     @ScaledMetric(relativeTo: .body) private var heroImageHeight = 250
@@ -69,7 +81,7 @@ struct MealPhotoLogSheet: View {
     @ScaledMetric(relativeTo: .body) private var bottomBarHeight = 88
 
     private var availableFoods: [FoodItem] {
-        foodItems.filter { !$0.kind.isComposite }
+        store.foodItems.filter { !$0.kind.isComposite }
     }
 
     private var canSave: Bool {
@@ -89,6 +101,10 @@ struct MealPhotoLogSheet: View {
 
     private var hasCamera: Bool {
         UIImagePickerController.isSourceTypeAvailable(.camera)
+    }
+
+    private var isAwaitingPhotoSelection: Bool {
+        selectedImage == nil
     }
 
     private var lowConfidenceItems: [MealPhotoDraftItem] {
@@ -140,38 +156,45 @@ struct MealPhotoLogSheet: View {
         [GridItem(.adaptive(minimum: chipMinWidth), spacing: 10, alignment: .top)]
     }
 
+    private var takePhotoButtonTitle: String {
+        isAwaitingPhotoSelection ? "Take Photo" : "Retake Photo"
+    }
+
+    private var choosePhotoButtonTitle: String {
+        isAwaitingPhotoSelection ? "Choose Photo" : "Choose Different Photo"
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: sectionSpacing) {
                     photoActionRow
-                    photoHeroCard
-                    detectionStatusCard
 
                     if selectedImage != nil {
+                        photoHeroCard
+                        detectionStatusCard
                         mealSlotCard
-                    }
 
-                    if hasDetectedItems {
-                        detectedFoodsSummaryCard
+                        if hasDetectedItems {
+                            detectedFoodsSummaryCard
 
-                        if !lowConfidenceItems.isEmpty {
-                            reviewNeededCard
+                            if !lowConfidenceItems.isEmpty {
+                                reviewNeededCard
+                            }
+
+                            detectedFoodEditorSection
+                        } else if !isAnalyzing {
+                            emptyDraftCard
                         }
-
-                        detectedFoodEditorSection
-                    } else if !isAnalyzing {
-                        emptyDraftCard
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, bottomBarHeight)
+                .padding(.top, isAwaitingPhotoSelection ? 28 : 12)
+                .padding(.bottom, isAwaitingPhotoSelection ? 24 : bottomBarHeight)
             }
             .font(.body)
             .scrollDismissesKeyboard(.interactively)
-            .dynamicTypeSize(.xSmall ... .large)
-            .navigationTitle("Photo Log")
+            .navigationTitle("Add from Photo")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -210,8 +233,51 @@ struct MealPhotoLogSheet: View {
                     }
                 )
             }
+            .sheet(item: $pendingLibraryEntry) { context in
+                FoodEntrySheet(
+                    categories: categories,
+                    units: units,
+                    allItems: store.foodItems,
+                    suggestionRequest: context.suggestionRequest,
+                    autoSuggestOnAppear: true
+                ) { item in
+                    Task {
+                        await saveLibraryFood(item, for: context.draftID)
+                    }
+                }
+            }
+            .confirmationDialog(
+                "Add to Library?",
+                isPresented: Binding(
+                    get: { libraryOfferContext != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            libraryOfferContext = nil
+                        }
+                    }
+                ),
+                titleVisibility: .visible,
+                presenting: libraryOfferContext
+            ) { context in
+                Button("Yes, add to library") {
+                    pendingLibraryEntry = context
+                    libraryOfferContext = nil
+                }
+                Button("Not now", role: .cancel) {
+                    libraryOfferContext = nil
+                }
+            } message: { context in
+                Text("Shall I add \(context.suggestionRequest.enteredName) to your library? DragonHealth will prepare the new food with AI, then return here and keep it in this photo log.")
+            }
+            .alert("Food Library Error", isPresented: $showingLibraryEntryError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(libraryEntryErrorMessage ?? "Food save failed.")
+            }
             .overlay(alignment: .bottom) {
-                saveBar
+                if selectedImage != nil {
+                    saveBar
+                }
             }
         }
     }
@@ -245,7 +311,7 @@ struct MealPhotoLogSheet: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: heroImageHeight, alignment: .leading)
                 .padding(cardPadding)
-                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .zenCard()
             }
         }
     }
@@ -255,8 +321,8 @@ struct MealPhotoLogSheet: View {
             showingCamera = true
         } label: {
             MealPhotoActionButtonLabel(
-                title: "Take Photo",
-                systemImage: "camera",
+                title: takePhotoButtonTitle,
+                systemImage: "camera.fill",
                 style: .primary,
                 minHeight: buttonMinHeight
             )
@@ -268,8 +334,8 @@ struct MealPhotoLogSheet: View {
     private var choosePhotoButton: some View {
         PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
             MealPhotoActionButtonLabel(
-                title: "Choose Photo",
-                systemImage: "photo",
+                title: choosePhotoButtonTitle,
+                systemImage: "photo.on.rectangle",
                 style: .primary,
                 minHeight: buttonMinHeight
             )
@@ -312,7 +378,11 @@ struct MealPhotoLogSheet: View {
             }
         }
         .padding(cardPadding)
-        .background(backgroundColor(forError: parseError != nil), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(cardBackgroundColor(forError: parseError != nil), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(cardBorderColor(forError: parseError != nil), lineWidth: 1)
+        )
     }
 
     private var mealSlotCard: some View {
@@ -330,7 +400,11 @@ struct MealPhotoLogSheet: View {
                 .foregroundStyle(.secondary)
         }
         .padding(cardPadding)
-        .background(backgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(cardBackgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(cardBorderColor(), lineWidth: 1)
+        )
     }
 
     private var detectedFoodsSummaryCard: some View {
@@ -349,7 +423,11 @@ struct MealPhotoLogSheet: View {
             }
         }
         .padding(cardPadding)
-        .background(backgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(cardBackgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(cardBorderColor(), lineWidth: 1)
+        )
     }
 
     private var reviewNeededCard: some View {
@@ -370,7 +448,14 @@ struct MealPhotoLogSheet: View {
             Toggle("I reviewed low-confidence items", isOn: $lowConfidenceReviewed)
         }
         .padding(cardPadding)
-        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(Color.orange)
+                .frame(width: 28, height: 3)
+                .padding(.top, 12)
+                .padding(.leading, 16)
+        }
+        .zenCard()
     }
 
     private var detectedFoodEditorSection: some View {
@@ -384,12 +469,19 @@ struct MealPhotoLogSheet: View {
                     categories: categories,
                     foodItems: availableFoods,
                     units: units,
+                    onAddToLibrary: {
+                        offerLibraryEntry(for: item)
+                    },
                     onDelete: {
                         deleteDraftItem(id: item.id)
                     }
                 )
                 .padding(cardPadding)
-                .background(backgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .background(cardBackgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(cardBorderColor(), lineWidth: 1)
+                )
             }
         }
     }
@@ -403,7 +495,11 @@ struct MealPhotoLogSheet: View {
                 .foregroundStyle(.secondary)
         }
         .padding(cardPadding)
-        .background(backgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(cardBackgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(cardBorderColor(), lineWidth: 1)
+        )
     }
 
     private var saveBar: some View {
@@ -476,8 +572,12 @@ struct MealPhotoLogSheet: View {
         return "Save is unavailable."
     }
 
-    private func backgroundColor(forError isError: Bool = false) -> Color {
-        isError ? Color.red.opacity(0.08) : Color(.secondarySystemGroupedBackground)
+    private func cardBackgroundColor(forError isError: Bool = false) -> Color {
+        isError ? ZenStyle.elevatedSurface : ZenStyle.surface
+    }
+
+    private func cardBorderColor(forError isError: Bool = false) -> Color {
+        isError ? Color.red.opacity(0.22) : Color.black.opacity(0.08)
     }
 
     @MainActor
@@ -594,6 +694,48 @@ struct MealPhotoLogSheet: View {
         return true
     }
 
+    private func offerLibraryEntry(for item: MealPhotoDraftItem) {
+        let enteredName = item.foodText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !enteredName.isEmpty else { return }
+        libraryOfferContext = MealPhotoLibraryEntryContext(
+            draftID: item.id,
+            suggestionRequest: FoodDetailSuggestionRequest(
+                enteredName: enteredName,
+                referenceImage: selectedImage,
+                referenceNotes: item.notes
+            )
+        )
+    }
+
+    private func saveLibraryFood(_ item: FoodItem, for draftID: UUID) async {
+        let error = await store.saveFoodItemReturningError(item)
+        await MainActor.run {
+            if let error {
+                libraryEntryErrorMessage = error
+                showingLibraryEntryError = true
+                return
+            }
+            pendingLibraryEntry = nil
+            linkSavedFood(item, to: draftID)
+        }
+    }
+
+    private func linkSavedFood(_ food: FoodItem, to draftID: UUID) {
+        guard let index = draftItems.firstIndex(where: { $0.id == draftID }) else { return }
+        draftItems[index].matchedFoodID = food.id
+        draftItems[index].foodText = food.name
+        draftItems[index].categoryID = food.categoryID
+        if draftItems[index].amountValue == nil {
+            draftItems[index].amountValue = food.amountPerPortion
+        }
+        if draftItems[index].amountUnitID == nil {
+            draftItems[index].amountUnitID = food.unitID
+        }
+        if draftItems[index].portion == nil {
+            draftItems[index].portion = food.portionEquivalent
+        }
+    }
+
     private func deleteDraftItem(id: UUID) {
         draftItems.removeAll { $0.id == id }
         lowConfidenceReviewed = false
@@ -624,7 +766,11 @@ private struct MealPhotoDetectedSummaryChip: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(rag.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(ZenStyle.elevatedSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(rag.color.opacity(0.20), lineWidth: 1)
+        )
     }
 }
 
@@ -634,6 +780,7 @@ private enum MealPhotoActionButtonStyle {
 }
 
 private struct MealPhotoActionButtonLabel: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let systemImage: String
     let style: MealPhotoActionButtonStyle
@@ -661,7 +808,7 @@ private struct MealPhotoActionButtonLabel: View {
     private var foregroundColor: Color {
         switch style {
         case .primary:
-            return .white
+            return colorScheme == .dark ? .black : .white
         case .secondary:
             return .primary
         }
@@ -670,7 +817,7 @@ private struct MealPhotoActionButtonLabel: View {
     private var background: Color {
         switch style {
         case .primary:
-            return Color.accentColor
+            return colorScheme == .dark ? Color.white.opacity(0.92) : Color.primary
         case .secondary:
             return Color(.secondarySystemGroupedBackground)
         }
@@ -691,6 +838,7 @@ private struct MealPhotoDraftRow: View {
     let categories: [Core.Category]
     let foodItems: [FoodItem]
     let units: [FoodUnit]
+    let onAddToLibrary: () -> Void
     let onDelete: () -> Void
     @State private var showingFoodPicker = false
     private var isLowConfidence: Bool {
@@ -774,8 +922,13 @@ private struct MealPhotoDraftRow: View {
                       let food = foodItems.first(where: { $0.id == newValue }) else { return }
                 item.foodText = food.name
                 item.categoryID = food.categoryID
-                item.portion = Portion.roundToIncrement(food.portionEquivalent, increment: portionIncrement)
-                if let amountPerPortion = food.amountPerPortion, let unitID = food.unitID {
+                if item.portion == nil {
+                    item.portion = Portion.roundToIncrement(food.portionEquivalent, increment: portionIncrement)
+                }
+                if item.amountValue == nil,
+                   item.amountUnitID == nil,
+                   let amountPerPortion = food.amountPerPortion,
+                   let unitID = food.unitID {
                     item.amountValue = amountPerPortion
                     item.amountUnitID = unitID
                 }
@@ -796,6 +949,19 @@ private struct MealPhotoDraftRow: View {
             if item.matchedFoodID == nil {
                 TextField("Custom Food Name", text: $item.foodText)
                     .padding(.vertical, 2)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("This food is not in your library yet. Shall I add it to your library?")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        onAddToLibrary()
+                    } label: {
+                        Label("Yes, add to library", systemImage: "plus.circle")
+                    }
+                    .glassButton(.text)
+                    .disabled(item.foodText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             }
 
             HStack {
@@ -823,7 +989,11 @@ private struct MealPhotoDraftRow: View {
                     .foregroundStyle(confidenceRAG.color)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
-                    .background(confidenceRAG.color.opacity(0.15), in: Capsule())
+                    .background(ZenStyle.elevatedSurface, in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(confidenceRAG.color.opacity(0.20), lineWidth: 1)
+                    )
             }
             .font(.caption)
             .foregroundStyle(confidenceRAG.color)

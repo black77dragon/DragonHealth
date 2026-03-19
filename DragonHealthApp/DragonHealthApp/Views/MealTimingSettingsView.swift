@@ -157,16 +157,14 @@ struct MealTimingSettingsView: View {
                 }
             }
             .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [accent.opacity(0.16), accent.opacity(0.04)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            )
+            .overlay(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(accent)
+                    .frame(width: 28, height: 3)
+                    .padding(.top, 10)
+                    .padding(.leading, 12)
+            }
+            .zenCard(cornerRadius: 16)
         }
     }
 

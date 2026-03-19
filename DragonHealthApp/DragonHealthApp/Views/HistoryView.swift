@@ -122,7 +122,6 @@ struct HistoryView: View {
                             onDelete: { entry in
                                 Task {
                                     await store.deleteEntry(entry)
-                                    await loadSelectedDay()
                                 }
                             }
                         )
@@ -153,7 +152,6 @@ struct HistoryView: View {
             }
             .padding(20)
         }
-        .navigationTitle("History")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -189,7 +187,6 @@ struct HistoryView: View {
                             notes: notes,
                             foodItemID: foodItemID
                         )
-                        await loadSelectedDay()
                     }
                 }
             )
@@ -213,7 +210,6 @@ struct HistoryView: View {
                             notes: notes,
                             foodItemID: foodItemID
                         )
-                        await loadSelectedDay()
                     }
                 }
             )
@@ -222,9 +218,39 @@ struct HistoryView: View {
         .task(id: selectedDate) { await loadSelectedDay() }
         .task(id: visibleMonthDate) { await loadCalendarIndicators(for: visibleMonthDate) }
         .task(id: scoreTimeFrameRaw) { await loadScoreHistory() }
-        .task(id: store.refreshToken) {
+        .task(id: selectedSurfaceRaw) {
+            if selectedSurface == .trends {
+                await loadWeeklyReflection()
+            } else {
+                weeklyReflection = nil
+            }
+        }
+        .task(id: store.historyInvalidation) {
+            await handleHistoryInvalidation(store.historyInvalidation)
+        }
+    }
+
+    private func handleHistoryInvalidation(_ invalidation: AppStore.HistoryInvalidation) async {
+        guard invalidation.reloadSelectedDay
+            || invalidation.reloadCalendarIndicators
+            || invalidation.reloadScoreHistory else {
+            return
+        }
+
+        let changedDay = invalidation.changedDay.map(normalizedDay(for:))
+
+        if invalidation.reloadSelectedDay,
+           changedDay == nil || changedDay == normalizedDay(for: selectedDate) {
             await loadSelectedDay()
+        }
+
+        if invalidation.reloadCalendarIndicators,
+           changedDay == nil || dayIsWithinCalendarIndicatorRange(changedDay!) {
             await loadCalendarIndicators(for: visibleMonthDate)
+        }
+
+        if invalidation.reloadScoreHistory,
+           changedDay == nil || dayIsWithinScoreHistoryRange(changedDay!) {
             await loadScoreHistory()
         }
     }
@@ -245,7 +271,11 @@ struct HistoryView: View {
             profilesByCategoryID: store.scoreProfiles,
             compensationRules: store.compensationRules
         )
-        await loadWeeklyReflection()
+        if selectedSurface == .trends {
+            await loadWeeklyReflection()
+        } else {
+            weeklyReflection = nil
+        }
     }
 
     private func loadScoreHistory() async {
@@ -274,6 +304,22 @@ struct HistoryView: View {
         return DateInterval(start: rangeStart, end: rangeEnd)
     }
 
+    private func normalizedDay(for date: Date) -> Date {
+        store.dayBoundary.dayStart(for: date, calendar: store.appCalendar)
+    }
+
+    private func dayIsWithinCalendarIndicatorRange(_ day: Date) -> Bool {
+        let range = calendarIndicatorRange(for: visibleMonthDate)
+        return day >= range.start && day <= range.end
+    }
+
+    private func dayIsWithinScoreHistoryRange(_ day: Date) -> Bool {
+        let calendar = store.appCalendar
+        let referenceDate = store.currentDay
+        let startDate = scoreTimeFrame.startDate(referenceDate: referenceDate, calendar: calendar) ?? Date.distantPast
+        return day >= startDate && day <= referenceDate
+    }
+
     private func loadWeeklyReflection() async {
         let calendar = store.appCalendar
         let endDay = store.dayBoundary.dayStart(for: selectedDate, calendar: calendar)
@@ -283,16 +329,16 @@ struct HistoryView: View {
         }
 
         let enabledCategories = store.categories.filter { $0.isEnabled }
+        let totalsByDay = await store.fetchDailyTotalsByDay(start: startDay, end: endDay)
+        let dayKeyBoundary = DayBoundary(cutoffMinutes: 0)
         var metCounts: [UUID: Int] = [:]
         var missCounts: [UUID: Int] = [:]
         var scores: [Double] = []
 
         for offset in 0..<7 {
             guard let day = calendar.date(byAdding: .day, value: offset, to: startDay) else { continue }
-            let reference = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
-            let log = await store.fetchDailyLog(for: reference)
-            let entries = log?.entries ?? []
-            let totalsByCategory = totalsCalculator.totalsByCategory(entries: entries)
+            let dayKey = dayKeyBoundary.dayKey(for: day, calendar: calendar)
+            let totalsByCategory = totalsByDay[dayKey] ?? [:]
             let adherence = evaluator.evaluate(categories: store.categories, totalsByCategoryID: totalsByCategory)
             let score = scoreEvaluator.evaluate(
                 categories: store.categories,
@@ -384,28 +430,25 @@ private struct HistorySurfaceHeader: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: ZenSpacing.section) {
+            VStack(alignment: .leading, spacing: ZenSpacing.text) {
                 Text("History")
-                    .font(.headline)
+                    .zenEyebrow()
                 Text(selectedDate, style: .date)
-                    .font(.title3.weight(.semibold))
+                    .zenHeroTitle()
                 Text(statusText)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             }
 
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Daily score")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .zenMetricLabel()
                     if let scoreSummary {
                         ScoreBadge(score: scoreSummary.overallScore)
                     } else {
                         Text("--")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                            .zenMetricValue()
                     }
                 }
                 Spacer()
@@ -418,11 +461,8 @@ private struct HistorySurfaceHeader: View {
                 .frame(maxWidth: 220)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(ZenSpacing.card)
+        .zenCard(cornerRadius: 22)
     }
 }
 
@@ -432,21 +472,20 @@ private struct HistoryDailyScoreCard: View {
     let scoreSummary: DailyScoreSummary?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: ZenSpacing.text) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Daily Score")
-                        .font(.headline)
+                        .zenSectionTitle()
                     Text(date, style: .date)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .zenMetricLabel()
                 }
                 Spacer()
                 if let scoreSummary {
                     ScoreBadge(score: scoreSummary.overallScore)
                 } else {
                     Text("--")
-                        .font(.subheadline)
+                        .font(.footnote.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
             }
@@ -454,25 +493,20 @@ private struct HistoryDailyScoreCard: View {
             if let adherence {
                 HStack {
                     Text(adherence.allTargetsMet ? "On Target" : "Off Target")
-                        .font(.subheadline)
+                        .font(.footnote.weight(.medium))
                     Spacer()
                     Image(systemName: adherence.allTargetsMet ? "checkmark.seal.fill" : "xmark.seal")
                         .foregroundStyle(adherence.allTargetsMet ? .green : .orange)
                 }
                 Text("\(adherence.categoryResults.filter { $0.targetMet }.count) of \(adherence.categoryResults.count) categories met")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             } else {
                 Text("No score yet.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(16)
+        .zenCard(cornerRadius: 18)
     }
 }
 
@@ -512,7 +546,7 @@ private struct HistoryScoreHistorySection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Score History")
-                .font(.headline)
+                .zenSectionTitle()
             HistoryTimeFramePicker(timeFrame: $timeFrame)
             ScoreHistoryChartCard(points: points)
         }
@@ -525,7 +559,7 @@ private struct HistoryNightGuardHistorySection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Night Guard History")
-                .font(.headline)
+                .zenSectionTitle()
             NightGuardHistoryChartCard(points: points)
         }
     }
@@ -535,19 +569,18 @@ private struct HistoryWeeklyReflectionCard: View {
     let reflection: WeeklyReflection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: ZenSpacing.group) {
             HStack {
                 Text("Weekly Reflection")
-                    .font(.headline)
+                    .zenSectionTitle()
                 Spacer()
                 Text(reflection.rangeText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenMetricLabel()
             }
 
             if let scoreDelta = reflection.scoreDelta {
                 Text(scoreDelta >= 0 ? "Score trend +\(scoreDelta.cleanNumber)" : "Score trend \(scoreDelta.cleanNumber)")
-                    .font(.subheadline)
+                    .font(.footnote.weight(.medium))
                     .foregroundStyle(scoreDelta >= 0 ? .green : .orange)
             }
 
@@ -556,32 +589,26 @@ private struct HistoryWeeklyReflectionCard: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("1 adjustment")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .zenMetricLabel()
                 Text(reflection.adjustment)
-                    .font(.subheadline)
+                    .font(.footnote)
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(16)
+        .zenCard(cornerRadius: 18)
     }
 
     private func reflectionSection(title: String, lines: [String], emptyState: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .zenMetricLabel()
             if lines.isEmpty {
                 Text(emptyState)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             } else {
                 ForEach(lines, id: \.self) { line in
                     Text(line)
-                        .font(.subheadline)
+                        .font(.footnote)
                 }
             }
         }
@@ -610,8 +637,7 @@ private struct HistoryTimeFramePicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Time Frame")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenMetricLabel()
             Picker("Time Frame", selection: $timeFrame) {
                 ForEach(HistoryScoreTimeFrame.allCases) { frame in
                     Text(frame.shortLabel)
@@ -691,13 +717,13 @@ private struct ScoreHistoryChartCard: View {
     let points: [ScoreHistoryPoint]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: ZenSpacing.text) {
             HStack {
                 Text("Score")
-                    .font(.headline)
+                    .zenSectionTitle()
                 Spacer()
                 Text(points.last.map { "\(Int($0.value.rounded()))" } ?? "--")
-                    .font(.subheadline)
+                    .font(.footnote.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
@@ -721,11 +747,8 @@ private struct ScoreHistoryChartCard: View {
                 #endif
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(16)
+        .zenCard(cornerRadius: 18)
     }
 
     @ViewBuilder
@@ -769,14 +792,13 @@ private struct NightGuardHistoryChartCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: ZenSpacing.text) {
             HStack {
                 Text("Compliance")
-                    .font(.headline)
+                    .zenSectionTitle()
                 Spacer()
                 Text(complianceText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenMetricLabel()
             }
 
             if points.isEmpty {
@@ -799,11 +821,8 @@ private struct NightGuardHistoryChartCard: View {
                 #endif
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(16)
+        .zenCard(cornerRadius: 18)
     }
 
     @ViewBuilder
@@ -835,24 +854,20 @@ private struct HistoryCategoryRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text(category.name)
-                    .font(.subheadline)
+                    .zenSectionTitle()
                 Text("Target: \(category.targetRule.displayText(unit: category.unitName))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenMetricLabel()
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
                 Text("\(total.cleanNumber) \(category.unitName)")
-                    .font(.subheadline)
+                    .font(.footnote.monospacedDigit())
                 Image(systemName: targetMet ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(targetMet ? .green : .secondary)
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(16)
+        .zenCard(cornerRadius: 18)
     }
 }
 
@@ -866,7 +881,7 @@ private struct HistoryEntriesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Entries")
-                .font(.headline)
+                .zenSectionTitle()
 
             ForEach(mealSlots) { slot in
                 let slotEntries = entries.filter { $0.mealSlotID == slot.id }
@@ -895,11 +910,10 @@ private struct HistoryMealSectionView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(mealSlot.name)
-                    .font(.subheadline)
+                    .zenSectionTitle()
                 Spacer()
                 Text("\(entries.reduce(0) { $0 + $1.portion.value }.cleanNumber) total")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenMetricLabel()
             }
 
             ForEach(entries) { entry in
@@ -912,11 +926,8 @@ private struct HistoryMealSectionView: View {
                 )
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(16)
+        .zenCard(cornerRadius: 18)
     }
 
     private func categoryName(for entry: DailyLogEntry) -> String {

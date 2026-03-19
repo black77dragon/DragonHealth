@@ -24,10 +24,10 @@ struct ManageView: View {
                     MoreLinkRow(title: "Night Guard", subtitle: "Evening routine and reminders", systemImage: "moon.stars") {
                         NightGuardView()
                     }
-                    MoreLinkRow(title: "Today View", subtitle: "Tune the home screen presentation", systemImage: "sun.max") {
+                    MoreLinkRow(title: "Today", subtitle: "Customize the Today screen", systemImage: "sun.max") {
                         TodayViewSettingsView()
                     }
-                    MoreLinkRow(title: "Document Library", subtitle: "Store PDFs and images for reference", systemImage: "doc.text") {
+                    MoreLinkRow(title: "Documents", subtitle: "Store PDFs and images for reference", systemImage: "doc.text") {
                         DocumentsView()
                     }
                 }
@@ -97,7 +97,7 @@ struct ManageView: View {
             }
             .padding(20)
         }
-        .navigationTitle("More")
+        .navigationTitle("Manage")
         .background(Color(.systemGroupedBackground))
     }
 }
@@ -132,27 +132,17 @@ private struct MoreHeroCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: ZenSpacing.text) {
             Text("Personal setup")
-                .font(.headline)
+                .zenEyebrow()
             Text(targetSummary)
-                .font(.subheadline)
+                .zenHeroTitle()
             Text(careSummary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenSupportText()
         }
-        .padding(18)
+        .padding(ZenSpacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.accentColor.opacity(0.18), Color.blue.opacity(0.06), Color(.secondarySystemBackground)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        .zenCard(cornerRadius: 22)
     }
 }
 
@@ -168,18 +158,19 @@ private struct MoreSectionCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: ZenSpacing.group) {
+            VStack(alignment: .leading, spacing: ZenSpacing.compact) {
                 Text(title)
-                    .font(.headline)
+                    .zenSectionTitle()
                 Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             }
             VStack(spacing: 0) {
                 content
             }
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(.vertical, 2)
+            .background(Color.clear)
+            .zenCard(cornerRadius: 18)
         }
     }
 }
@@ -203,16 +194,22 @@ private struct MoreLinkRow<Destination: View>: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: systemImage)
-                    .font(.body.weight(.semibold))
-                    .frame(width: 24)
-                    .foregroundStyle(Color.accentColor)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 34, height: 34)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(ZenStyle.surface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    )
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                        .zenSectionTitle()
                     Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .zenSupportText()
                         .multilineTextAlignment(.leading)
                 }
                 Spacer()
@@ -328,7 +325,7 @@ private struct TodayViewSettingsView: View {
                 .pickerStyle(.segmented)
             }
         }
-        .navigationTitle("Today View")
+        .navigationTitle("Today")
     }
 }
 
@@ -1101,7 +1098,7 @@ private struct CareTeamBriefView: View {
             )
             await store.saveDocument(document)
             await MainActor.run {
-                statusMessage = "Saved to Document Library."
+                statusMessage = "Saved to Documents."
             }
         } catch {
             await MainActor.run {
@@ -1641,13 +1638,9 @@ struct AboutView: View {
                 HStack(alignment: .top, spacing: 12) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.accentColor.opacity(0.95), Color.accentColor.opacity(0.55)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
+                            .fill(ZenStyle.elevatedSurface)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.black.opacity(0.08), lineWidth: 1)
                         Image("AppIconBadge")
                             .resizable()
                             .scaledToFit()

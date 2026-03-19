@@ -2,7 +2,7 @@ import XCTest
 @testable import Core
 
 final class DailyTotalsCalculatorTests: XCTestCase {
-    func testTotalsByCategoryAggregatesPortions() {
+    func testTotalsByCategoryAggregatesPortions() throws {
         let categoryID = UUID()
         let mealID = UUID()
         let date = Date()

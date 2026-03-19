@@ -176,6 +176,7 @@ struct HistoryCalendarView: View {
 }
 
 private struct CalendarDayCell: View {
+    @Environment(\.colorScheme) private var colorScheme
     let date: Date
     let calendar: Calendar
     let score: Double?
@@ -197,13 +198,13 @@ private struct CalendarDayCell: View {
 
                 if isSelected || isToday {
                     Circle()
-                        .fill(Color.accentColor)
+                        .fill(colorScheme == .dark ? Color.white.opacity(0.92) : Color.primary)
                         .frame(width: ringSize - 2, height: ringSize - 2)
                 }
 
                 Text("\(calendar.component(.day, from: date))")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle((isSelected || isToday) ? .white : .primary)
+                    .foregroundStyle((isSelected || isToday) ? selectedForegroundColor : .primary)
             }
 
             HStack(spacing: 4) {
@@ -227,5 +228,9 @@ private struct CalendarDayCell: View {
     private var scoreText: String {
         guard let score else { return "00" }
         return "\(Int(score.rounded()))"
+    }
+
+    private var selectedForegroundColor: Color {
+        colorScheme == .dark ? .black : .white
     }
 }

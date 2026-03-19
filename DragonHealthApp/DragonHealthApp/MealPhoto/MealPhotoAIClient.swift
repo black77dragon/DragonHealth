@@ -27,7 +27,7 @@ struct MealPhotoDraftItem: Identifiable, Hashable {
 enum MealPhotoAIConfig {
     static let apiKeyInfoKey = "OPENAI_API_KEY"
     static let modelInfoKey = "OPENAI_VISION_MODEL"
-    static let defaultModel = "gpt-4.1-mini"
+    static let defaultModel = "gpt-5-mini"
 
     static func apiKey() -> String? {
         if let key = KeychainStore.read(.openAIApiKey),
@@ -110,44 +110,79 @@ struct OpenAIMealPhotoClient {
     ) async throws -> [MealPhotoDetection] {
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else { throw ClientError.missingAPIKey }
-        guard let imageData = image.preparedForMealAnalysisJPEGData() else {
-            throw ClientError.invalidImageData
-        }
+        let request = try await makeRequest(
+            apiKey: trimmedKey,
+            image: image,
+            foodNames: foodNames,
+            categoryNames: categoryNames
+        )
+        let data = try await performRequestWithRetry(request)
+        return try await decodeDetections(from: data)
+    }
 
+    private func makeRequest(
+        apiKey: String,
+        image: UIImage,
+        foodNames: [String],
+        categoryNames: [String]
+    ) async throws -> URLRequest {
         guard let url = URL(string: "https://api.openai.com/v1/chat/completions") else {
             throw ClientError.invalidURL
         }
 
-        let payload = makePayload(
-            imageData: imageData,
-            model: model,
-            foodNames: foodNames,
-            categoryNames: categoryNames
-        )
-        let bodyData = try JSONSerialization.data(withJSONObject: payload, options: [])
+        let bodyData = try await runBackgroundWork {
+            guard let imageData = image.preparedForMealAnalysisJPEGData() else {
+                throw ClientError.invalidImageData
+            }
+
+            let payload = makePayload(
+                imageData: imageData,
+                model: model,
+                foodNames: foodNames,
+                categoryNames: categoryNames
+            )
+            return try JSONSerialization.data(withJSONObject: payload, options: [])
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.httpBody = bodyData
         request.timeoutInterval = 35
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(trimmedKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        return request
+    }
 
-        let data = try await performRequestWithRetry(request)
+    private func decodeDetections(from data: Data) async throws -> [MealPhotoDetection] {
+        try await runBackgroundWork {
+            let completion: ChatCompletionResponse
+            do {
+                completion = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
+            } catch {
+                throw ClientError.decodingError(error.localizedDescription)
+            }
 
-        let completion: ChatCompletionResponse
-        do {
-            completion = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
-        } catch {
-            throw ClientError.decodingError(error.localizedDescription)
+            guard let content = completion.choices.first?.message.content,
+                  !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ClientError.emptyResponse
+            }
+
+            return try parseDetections(from: content)
         }
+    }
 
-        guard let content = completion.choices.first?.message.content,
-              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ClientError.emptyResponse
+    private func runBackgroundWork<T>(
+        _ work: @escaping () throws -> T
+    ) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    continuation.resume(returning: try work())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
-
-        return try parseDetections(from: content)
     }
 
     private func makePayload(

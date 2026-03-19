@@ -39,11 +39,8 @@ struct DragonHealthApp: App {
 struct RootTabView: View {
     var body: some View {
         TabView {
-            TodayStack()
-                .tabItem { Label("Today", systemImage: "sun.max") }
-
-            HistoryStack()
-                .tabItem { Label("History", systemImage: "calendar") }
+            JournalStack()
+                .tabItem { Label("Journal", systemImage: "calendar") }
 
             BodyStack()
                 .tabItem { Label("Body", systemImage: "figure") }
@@ -58,19 +55,47 @@ struct RootTabView: View {
 }
 ```
 
-## Today Tab
+## Journal Tab
 
-### TodayStack
+### JournalStack
 
 ```swift
-struct TodayStack: View {
+struct JournalStack: View {
     var body: some View {
         NavigationStack {
-            TodayView()
+            DailyHubView()
         }
     }
 }
 ```
+
+### DailyHubView
+
+```swift
+struct DailyHubView: View {
+    var body: some View {
+        VStack {
+            Picker("Journal section", selection: $selectedSection) {
+                Text("Today").tag(DailyHubSection.today)
+                Text("History").tag(DailyHubSection.history)
+            }
+            .pickerStyle(.segmented)
+
+            switch selectedSection {
+            case .today:
+                TodayView()
+            case .history:
+                HistoryView()
+            }
+        }
+        .navigationTitle("Journal")
+    }
+}
+```
+
+Notes:
+- `TodayView` and `HistoryView` are two surfaces of the same journal workspace.
+- The segmented control preserves fast switching without introducing a sixth root tab.
 
 ### TodayView (Dashboard + Meals)
 
@@ -200,20 +225,6 @@ struct CategoryDayDetailView: View {
 
 Notes:
 - DayEntryRow uses leading/trailing swipe actions for edit and delete.
-
-## History Tab
-
-### HistoryStack
-
-```swift
-struct HistoryStack: View {
-    var body: some View {
-        NavigationStack {
-            HistoryView()
-        }
-    }
-}
-```
 
 ### HistoryView (Calendar + Trends Toggle)
 
@@ -401,7 +412,7 @@ struct ManageView: View {
             }
 
             Section("Documents") {
-                NavigationLink("Document Library") {
+                NavigationLink("Documents") {
                     DocumentsView()
                 }
             }
@@ -423,19 +434,20 @@ struct ManageView: View {
 stateDiagram-v2
     [*] --> RootTabView
 
-    RootTabView --> TodayStack
-    RootTabView --> HistoryStack
+    RootTabView --> JournalStack
+    RootTabView --> NightGuardStack
     RootTabView --> BodyStack
     RootTabView --> LibraryStack
     RootTabView --> ManageStack
 
-    TodayStack --> TodayView
+    JournalStack --> DailyHubView
+    DailyHubView --> TodayView
+    DailyHubView --> HistoryView
     TodayView --> MealDetailView
     TodayView --> CategoryDayDetailView
     MealDetailView --> FoodPickerView
 
-    HistoryStack --> HistoryView
-    HistoryView --> DayDetailView
+    NightGuardStack --> NightGuardView
 
     BodyStack --> BodyView
 
