@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import Core
 import PhotosUI
 import UIKit
@@ -26,13 +27,14 @@ struct LibraryView: View {
     }
 
     var body: some View {
+        let content = buildLibraryContent()
         List {
             Section {
                 LibraryHeroCard(
                     selectedSurface: selectedSurfaceBinding,
-                    totalCount: store.foodItems.count,
-                    favoriteCount: store.foodItems.filter(\.isFavorite).count,
-                    compositeCount: store.foodItems.filter { $0.kind.isComposite }.count
+                    totalCount: content.totalCount,
+                    favoriteCount: content.favoriteCount,
+                    compositeCount: content.compositeCount
                 )
                 .listRowBackground(Color.clear)
             }
@@ -46,19 +48,19 @@ struct LibraryView: View {
                 .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
             }
 
-            if contentSections.isEmpty {
+            if content.sections.isEmpty {
                 Section {
                     LibraryEmptyStateCard(
-                        title: emptyStateTitle,
-                        message: emptyStateMessage
+                        title: content.emptyStateTitle,
+                        message: content.emptyStateMessage
                     )
                     .listRowBackground(Color.clear)
                 }
             } else {
-                ForEach(contentSections) { section in
+                ForEach(content.sections) { section in
                     Section(section.title) {
                         ForEach(section.items) { item in
-                            foodRow(for: item)
+                            foodRow(for: item, content: content)
                         }
                     }
                 }
@@ -138,86 +140,89 @@ struct LibraryView: View {
         }
     }
 
-    private func categoryName(for id: UUID) -> String {
-        store.categories.first(where: { $0.id == id })?.name ?? "Unassigned"
-    }
+    private func buildLibraryContent() -> LibraryContent {
+        let categoryNamesByID = Dictionary(
+            uniqueKeysWithValues: store.categories.map { ($0.id, $0.name) }
+        )
+        let unitSymbolsByID = Dictionary(
+            uniqueKeysWithValues: store.units.map { ($0.id, $0.symbol) }
+        )
+        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    private func unitSymbol(for id: UUID?) -> String? {
-        guard let id else { return nil }
-        return store.units.first(where: { $0.id == id })?.symbol
-    }
-
-    private var filteredFavorites: [FoodItem] {
-        filteredItems.filter(\.isFavorite)
-    }
-
-    private var filteredItems: [FoodItem] {
-        store.foodItems
-            .filter(matchesCategory)
-            .filter(matchesSearch)
+        let filteredItems = store.foodItems
+            .filter { item in
+                guard let selectedCategoryID else { return true }
+                return item.categoryID == selectedCategoryID
+            }
+            .filter { item in
+                guard !trimmedSearch.isEmpty else { return true }
+                let category = categoryNamesByID[item.categoryID] ?? "Unassigned"
+                let notes = item.notes ?? ""
+                return item.name.localizedStandardContains(trimmedSearch)
+                    || category.localizedStandardContains(trimmedSearch)
+                    || notes.localizedStandardContains(trimmedSearch)
+            }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
 
-    private var contentSections: [LibrarySection] {
+        let sections: [LibrarySection]
         switch selectedSurface {
         case .browse:
             let grouped = Dictionary(grouping: filteredItems) { item in
-                categoryName(for: item.categoryID)
+                categoryNamesByID[item.categoryID] ?? "Unassigned"
             }
-            return grouped.keys.sorted().compactMap { category in
+            sections = grouped.keys.sorted().compactMap { category in
                 guard let items = grouped[category], !items.isEmpty else { return nil }
                 return LibrarySection(title: category, items: items)
             }
         case .favorites:
-            return filteredFavorites.isEmpty ? [] : [LibrarySection(title: "Favorites", items: filteredFavorites)]
+            let favorites = filteredItems.filter(\.isFavorite)
+            sections = favorites.isEmpty ? [] : [LibrarySection(title: "Favorites", items: favorites)]
         case .recipes:
             let composites = filteredItems.filter { $0.kind.isComposite }
-            return composites.isEmpty ? [] : [LibrarySection(title: "Composite foods", items: composites)]
+            sections = composites.isEmpty ? [] : [LibrarySection(title: "Composite foods", items: composites)]
         }
-    }
 
-    private var emptyStateTitle: String {
+        let emptyStateTitle: String
         switch selectedSurface {
         case .browse:
-            return store.foodItems.isEmpty ? "No foods yet" : "No foods match this view"
+            emptyStateTitle = store.foodItems.isEmpty ? "No foods yet" : "No foods match this view"
         case .favorites:
-            return "No favorites yet"
+            emptyStateTitle = "No favorites yet"
         case .recipes:
-            return "No composite foods yet"
+            emptyStateTitle = "No composite foods yet"
         }
-    }
 
-    private var emptyStateMessage: String {
+        let emptyStateMessage: String
         switch selectedSurface {
         case .browse:
-            return store.foodItems.isEmpty
+            emptyStateMessage = store.foodItems.isEmpty
                 ? "Add foods or recipes to start building your library."
                 : "Try a different search term or clear the category filter."
         case .favorites:
-            return "Star the foods you use most so they are easier to find from quick add."
+            emptyStateMessage = "Star the foods you use most so they are easier to find from quick add."
         case .recipes:
-            return "Create composite foods for meals you repeat often."
+            emptyStateMessage = "Create composite foods for meals you repeat often."
         }
-    }
 
-    private func matchesCategory(_ item: FoodItem) -> Bool {
-        guard let selectedCategoryID else { return true }
-        return item.categoryID == selectedCategoryID
-    }
-
-    private func matchesSearch(_ item: FoodItem) -> Bool {
-        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
-        let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let category = categoryName(for: item.categoryID)
-        let notes = item.notes ?? ""
-        return item.name.localizedStandardContains(term)
-            || category.localizedStandardContains(term)
-            || notes.localizedStandardContains(term)
+        return LibraryContent(
+            totalCount: store.foodItems.count,
+            favoriteCount: store.foodItems.filter(\.isFavorite).count,
+            compositeCount: store.foodItems.filter { $0.kind.isComposite }.count,
+            sections: sections,
+            emptyStateTitle: emptyStateTitle,
+            emptyStateMessage: emptyStateMessage,
+            categoryNamesByID: categoryNamesByID,
+            unitSymbolsByID: unitSymbolsByID
+        )
     }
 
     @ViewBuilder
-    private func foodRow(for item: FoodItem) -> some View {
-        FoodItemRow(item: item, categoryName: categoryName(for: item.categoryID), unitSymbol: unitSymbol(for: item.unitID))
+    private func foodRow(for item: FoodItem, content: LibraryContent) -> some View {
+        FoodItemRow(
+            item: item,
+            categoryName: content.categoryNamesByID[item.categoryID] ?? "Unassigned",
+            unitSymbol: item.unitID.flatMap { content.unitSymbolsByID[$0] }
+        )
             .contentShape(Rectangle())
             .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
             .onTapGesture {
@@ -239,6 +244,17 @@ struct LibraryView: View {
                 }
             }
     }
+}
+
+private struct LibraryContent {
+    let totalCount: Int
+    let favoriteCount: Int
+    let compositeCount: Int
+    let sections: [LibrarySection]
+    let emptyStateTitle: String
+    let emptyStateMessage: String
+    let categoryNamesByID: [UUID: String]
+    let unitSymbolsByID: [UUID: String]
 }
 
 private enum LibrarySurface: String, CaseIterable, Identifiable {
@@ -271,14 +287,12 @@ private struct LibraryHeroCard: View {
     let compositeCount: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: ZenSpacing.section) {
+            VStack(alignment: .leading, spacing: ZenSpacing.text) {
                 Text("Food library")
-                    .font(.caption.weight(.semibold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.secondary)
+                    .zenEyebrow()
                 Text("Browse by purpose instead of scanning one long list.")
-                    .font(.title3.weight(.semibold))
+                    .zenHeroTitle()
                 HStack(spacing: 12) {
                     LibraryHeroMetric(label: "Foods", value: "\(totalCount)")
                     LibraryHeroMetric(label: "Favorites", value: "\(favoriteCount)")
@@ -293,17 +307,8 @@ private struct LibraryHeroCard: View {
             }
             .pickerStyle(.segmented)
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.orange.opacity(0.15), Color.green.opacity(0.10), Color(.secondarySystemBackground)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        .padding(ZenSpacing.card)
+        .zenCard(cornerRadius: 24)
     }
 }
 
@@ -314,17 +319,13 @@ private struct LibraryHeroMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenMetricLabel()
             Text(value)
-                .font(.headline.monospacedDigit())
+                .zenMetricValue()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.thinMaterial)
-        )
+        .zenCard(cornerRadius: 14)
     }
 }
 
@@ -355,9 +356,13 @@ private struct LibraryCategoryFilterBar: View {
                 .padding(.vertical, 9)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(isSelected ? Color.accentColor.opacity(0.18) : Color(.secondarySystemBackground))
+                        .fill(isSelected ? ZenStyle.elevatedSurface : ZenStyle.surface)
                 )
-                .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(isSelected ? Color.primary.opacity(0.12) : Color.clear, lineWidth: 1)
+                )
+                .foregroundStyle(.primary)
         }
         .buttonStyle(.plain)
     }
@@ -370,17 +375,13 @@ private struct LibraryEmptyStateCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.headline)
+                .zenSectionTitle()
             Text(message)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                .zenSupportText()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .zenCard()
     }
 }
 
@@ -464,15 +465,26 @@ struct FoodThumbnailView: View {
     let imagePath: String?
     let remoteURL: String?
     var size: CGFloat = 44
+    @StateObject private var loader: FoodThumbnailLoader
+
+    init(imagePath: String?, remoteURL: String?, size: CGFloat = 44) {
+        self.imagePath = imagePath
+        self.remoteURL = remoteURL
+        self.size = size
+        _loader = StateObject(wrappedValue: FoodThumbnailLoader(imagePath: imagePath))
+    }
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(.secondarySystemBackground))
-            if let image = loadImage() {
+            if let image = loader.image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
+            } else if imagePath != nil && !loader.didFinishLoading {
+                ProgressView()
+                    .controlSize(.small)
             } else if let remoteURL, let url = URL(string: remoteURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -499,12 +511,12 @@ struct FoodThumbnailView: View {
                 .stroke(Color(.separator), lineWidth: 1)
         )
         .accessibilityHidden(true)
-    }
-
-    private func loadImage() -> UIImage? {
-        guard let imagePath else { return nil }
-        let url = FoodImageStorage.url(for: imagePath)
-        return UIImage(contentsOfFile: url.path)
+        .onAppear {
+            loader.load(imagePath: imagePath)
+        }
+        .onChange(of: imagePath) { _, newValue in
+            loader.load(imagePath: newValue)
+        }
     }
 
     @ViewBuilder
@@ -515,7 +527,69 @@ struct FoodThumbnailView: View {
     }
 }
 
-private struct FoodEntrySheet: View {
+private final class FoodThumbnailLoader: ObservableObject {
+    @Published private(set) var image: UIImage?
+    @Published private(set) var didFinishLoading: Bool
+
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 200
+        return cache
+    }()
+
+    private var currentImagePath: String?
+    private var isLoading = false
+
+    init(imagePath: String?) {
+        currentImagePath = imagePath
+        if let imagePath,
+           let cached = Self.cache.object(forKey: imagePath as NSString) {
+            image = cached
+            didFinishLoading = true
+        } else {
+            didFinishLoading = imagePath == nil
+        }
+    }
+
+    func load(imagePath: String?) {
+        if currentImagePath != imagePath {
+            currentImagePath = imagePath
+            isLoading = false
+            image = nil
+            didFinishLoading = imagePath == nil
+        }
+
+        guard let imagePath else { return }
+
+        if let cached = Self.cache.object(forKey: imagePath as NSString) {
+            image = cached
+            didFinishLoading = true
+            return
+        }
+
+        guard !isLoading else { return }
+        isLoading = true
+        didFinishLoading = false
+
+        DispatchQueue.global(qos: .utility).async {
+            let url = FoodImageStorage.url(for: imagePath)
+            let loadedImage = UIImage(contentsOfFile: url.path)
+            if let loadedImage {
+                Self.cache.setObject(loadedImage, forKey: imagePath as NSString)
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.currentImagePath == imagePath else { return }
+                self.image = loadedImage
+                self.didFinishLoading = true
+                self.isLoading = false
+            }
+        }
+    }
+}
+
+struct FoodEntrySheet: View {
     private enum PhotoSelectionKind {
         case none
         case local
@@ -550,6 +624,8 @@ private struct FoodEntrySheet: View {
     let allItems: [FoodItem]
     let existingItem: FoodItem?
     let initialKind: FoodItemKind
+    let suggestionRequest: FoodDetailSuggestionRequest?
+    let autoSuggestOnAppear: Bool
     let onSave: (FoodItem) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -574,6 +650,10 @@ private struct FoodEntrySheet: View {
     @State private var removeExistingImage = false
     @State private var photoSource: PhotoSource = .local
     @State private var componentPickerContext: ComponentPickerContext?
+    @State private var isSuggestingDetails = false
+    @State private var suggestionError: String?
+    @State private var suggestionConfidence: Double?
+    @State private var didAutoSuggest = false
     private let compactRowInsets = EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
 
     private var selectedCategory: Core.Category? {
@@ -596,6 +676,8 @@ private struct FoodEntrySheet: View {
         allItems: [FoodItem],
         item: FoodItem? = nil,
         initialKind: FoodItemKind = .single,
+        suggestionRequest: FoodDetailSuggestionRequest? = nil,
+        autoSuggestOnAppear: Bool = false,
         onSave: @escaping (FoodItem) -> Void
     ) {
         self.categories = categories
@@ -603,8 +685,10 @@ private struct FoodEntrySheet: View {
         self.allItems = allItems
         self.existingItem = item
         self.initialKind = initialKind
+        self.suggestionRequest = suggestionRequest
+        self.autoSuggestOnAppear = autoSuggestOnAppear
         self.onSave = onSave
-        _name = State(initialValue: item?.name ?? "")
+        _name = State(initialValue: item?.name ?? suggestionRequest?.enteredName ?? "")
         _itemKind = State(initialValue: item?.kind ?? initialKind)
         _categoryID = State(initialValue: item?.categoryID)
         _portion = State(initialValue: item?.portionEquivalent ?? 1.0)
@@ -615,6 +699,7 @@ private struct FoodEntrySheet: View {
         } ?? [])
         _notes = State(initialValue: item?.notes ?? "")
         _isFavorite = State(initialValue: item?.isFavorite ?? false)
+        _selectedImage = State(initialValue: suggestionRequest?.referenceImage)
         _existingImagePath = State(initialValue: item?.imagePath)
         _existingAttribution = State(initialValue: item?.foodImageAttribution)
     }
@@ -622,176 +707,117 @@ private struct FoodEntrySheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Photo") {
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack(alignment: .top, spacing: 16) {
-                            FoodPhotoPreview(
-                                image: selectedImage,
-                                remoteURL: displayedRemoteURL
-                            )
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Source")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Picker("Source", selection: $photoSource) {
-                                    ForEach(PhotoSource.allCases) { source in
-                                        Text(source.rawValue).tag(source)
-                                    }
-                                }
-                                .pickerStyle(.segmented)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-
-                        if photoSource == .local {
-                            HStack(spacing: 10) {
-                                PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
-                                    Label("Choose Photo", systemImage: "photo")
-                                        .glassLabel(.text)
-                                }
-                                if shouldShowRemovePhoto {
-                                    Button(role: .destructive) {
-                                        clearSelectedPhoto()
-                                    } label: {
-                                        Label("Remove", systemImage: "trash")
-                                    }
-                                    .glassButton(.text)
-                                }
-                            }
-                        } else {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Search Unsplash")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                HStack(spacing: 8) {
-                                    TextField("Search food photos", text: $searchModel.query)
-                                        .textInputAutocapitalization(.words)
-                                        .autocorrectionDisabled()
-                                        .submitLabel(.search)
-                                        .onSubmit {
-                                            Task { await searchModel.search() }
-                                        }
-                                        .textFieldStyle(.roundedBorder)
-                                    Button("Search") {
-                                        Task { await searchModel.search() }
-                                    }
-                                    .glassButton(.compact)
-                                    .disabled(searchModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                                }
-
-                                if !searchModel.isConfigured {
-                                    Text("Unsplash API key is not configured.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                } else if searchModel.isLoading {
-                                    ProgressView("Searching…")
-                                        .font(.caption)
-                                } else if let errorMessage = searchModel.errorMessage {
-                                    Text(errorMessage)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                if isDownloadingRemote {
-                                    ProgressView("Downloading photo…")
-                                        .font(.caption)
-                                } else if let downloadError {
-                                    Text(downloadError)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                if !searchModel.results.isEmpty {
-                                    ScrollView(.horizontal, showsIndicators: false) {
-                                        LazyHGrid(rows: [GridItem(.fixed(80))], spacing: 12) {
-                                            ForEach(searchModel.results) { photo in
-                                                Button {
-                                                    selectRemotePhoto(photo)
-                                                } label: {
-                                                    UnsplashResultCell(
-                                                        photo: photo,
-                                                        isSelected: selectedAttribution?.sourceID == photo.id
-                                                    )
-                                                }
-                                                .buttonStyle(.plain)
-                                                .disabled(isDownloadingRemote)
-                                            }
-                                        }
-                                        .frame(height: 90)
-                                        .padding(.vertical, 4)
-                                    }
-                                }
-                            }
-                        }
-
-                        if let attribution = displayedAttribution {
-                            FoodPhotoAttributionView(attribution: attribution)
-                        }
-                    }
-                }
-
-                Section("Type") {
-                    Picker("Item Type", selection: $itemKind) {
-                        Text("Food").tag(FoodItemKind.single)
-                        Text("Composite").tag(FoodItemKind.composite)
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(existingItem != nil)
-                }
-
-                Section("Details") {
-                    LabeledContent("Name") {
-                        TextField("Required", text: $name)
-                    }
-                    .listRowInsets(compactRowInsets)
-                    if !itemKind.isComposite {
-                        LabeledContent("Category") {
-                            Picker("", selection: $categoryID) {
-                                ForEach(categories) { category in
-                                    Text(category.name).tag(Optional(category.id))
-                                }
-                            }
-                            .labelsHidden()
-                        }
+                Section("Food") {
+                    TextField("Food name", text: $name)
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
                         .listRowInsets(compactRowInsets)
-                        if isDrinkCategory {
-                            LabeledContent("Portion") {
-                                Text(portion.cleanNumber)
-                            }
+
+                    if shouldShowSuggestionSection {
+                        Text(shouldRevealEntryDetails ? "Use Smart Fill to prefill the rest, then review and adjust the details below." : "Start with the food name. The rest of the details will appear after you enter it.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                             .listRowInsets(compactRowInsets)
-                            Text("Derived from amount (ml/L).")
+
+                        Button {
+                            requestSuggestedDetails()
+                        } label: {
+                            Label(isSuggestingDetails ? "Preparing Details..." : "Smart Fill Details", systemImage: "sparkles")
+                        }
+                        .glassButton(.text)
+                        .disabled(!canRequestSuggestedDetails)
+                        .listRowInsets(compactRowInsets)
+
+                        if isSuggestingDetails {
+                            ProgressView("Preparing food proposal…")
+                                .font(.caption)
+                                .listRowInsets(compactRowInsets)
+                        } else if let suggestionError {
+                            Text(suggestionError)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .listRowInsets(compactRowInsets)
+                        } else if let suggestionConfidence {
+                            Text("AI prepared this food entry for review. Confidence: \((suggestionConfidence * 100).rounded().cleanNumber)%")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .listRowInsets(compactRowInsets)
-                        } else {
-                            LabeledContent("Portion") {
-                                Stepper(value: $portion, in: 0.1...6.0, step: 0.1) {
-                                    Text(portion.cleanNumber)
-                                }
-                            }
-                            .listRowInsets(compactRowInsets)
+                        } else if MealPhotoAIConfig.client() == nil {
+                            Text("OpenAI API key missing. Add it in Manage > Integrations > Meal Photo AI.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .listRowInsets(compactRowInsets)
                         }
-                    }
-                    LabeledContent("Favorite") {
-                        Toggle("", isOn: $isFavorite)
-                            .labelsHidden()
-                    }
-                    .listRowInsets(compactRowInsets)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Notes")
+                    } else if !shouldRevealEntryDetails {
+                        Text("Enter the food name first. The rest of the fields will appear next.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        TextField("Add optional notes", text: $notes, axis: .vertical)
-                            .lineLimit(3, reservesSpace: true)
-                            .textFieldStyle(.roundedBorder)
+                            .listRowInsets(compactRowInsets)
                     }
-                    .listRowInsets(compactRowInsets)
                 }
 
-                if itemKind.isComposite {
-                    componentsSection
-                } else {
-                    portionSizeSection
+                if shouldRevealEntryDetails {
+                    Section("Type") {
+                        Picker("Item Type", selection: $itemKind) {
+                            Text("Food").tag(FoodItemKind.single)
+                            Text("Composite").tag(FoodItemKind.composite)
+                        }
+                        .pickerStyle(.segmented)
+                        .disabled(existingItem != nil)
+                    }
+
+                    Section("Details") {
+                        if !itemKind.isComposite {
+                            LabeledContent("Category") {
+                                Picker("", selection: $categoryID) {
+                                    ForEach(categories) { category in
+                                        Text(category.name).tag(Optional(category.id))
+                                    }
+                                }
+                                .labelsHidden()
+                            }
+                            .listRowInsets(compactRowInsets)
+                            if isDrinkCategory {
+                                LabeledContent("Portion") {
+                                    Text(portion.cleanNumber)
+                                }
+                                .listRowInsets(compactRowInsets)
+                                Text("Derived from amount (ml/L).")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .listRowInsets(compactRowInsets)
+                            } else {
+                                LabeledContent("Portion") {
+                                    Stepper(value: $portion, in: 0.1...6.0, step: 0.1) {
+                                        Text(portion.cleanNumber)
+                                    }
+                                }
+                                .listRowInsets(compactRowInsets)
+                            }
+                        }
+                        LabeledContent("Favorite") {
+                            Toggle("", isOn: $isFavorite)
+                                .labelsHidden()
+                        }
+                        .listRowInsets(compactRowInsets)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Notes")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            TextField("Add optional notes", text: $notes, axis: .vertical)
+                                .lineLimit(3, reservesSpace: true)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        .listRowInsets(compactRowInsets)
+                    }
+
+                    if itemKind.isComposite {
+                        componentsSection
+                    } else {
+                        portionSizeSection
+                    }
+
+                    photoSection
                 }
             }
             .navigationTitle(navigationTitle)
@@ -844,7 +870,7 @@ private struct FoodEntrySheet: View {
                         onSave(
                             FoodItem(
                                 id: itemID,
-                                name: name,
+                                name: trimmedName,
                                 categoryID: resolvedCategoryID,
                                 portionEquivalent: resolvedPortionEquivalent,
                                 amountPerPortion: amountValue,
@@ -865,7 +891,7 @@ private struct FoodEntrySheet: View {
                         dismiss()
                     }
                     .glassButton(.text)
-                    .disabled(name.isEmpty || !isSaveValid)
+                    .disabled(trimmedName.isEmpty || !isSaveValid)
                 }
             }
             .onAppear {
@@ -881,11 +907,17 @@ private struct FoodEntrySheet: View {
                 syncDrinkPortionFromAmount()
                 if selectedImage == nil {
                     photoSelectionKind = .none
+                } else if photoSelectionKind == .none {
+                    photoSelectionKind = .local
                 }
                 if (selectedAttribution ?? existingAttribution) != nil {
                     photoSource = .unsplash
                 } else {
                     photoSource = .local
+                }
+                if autoSuggestOnAppear, !didAutoSuggest, shouldShowSuggestionSection {
+                    didAutoSuggest = true
+                    requestSuggestedDetails()
                 }
             }
             .onChange(of: itemKind) { _, newValue in
@@ -924,6 +956,25 @@ private struct FoodEntrySheet: View {
             allowed.append(existing)
         }
         return allowed
+    }
+
+    private var shouldShowSuggestionSection: Bool {
+        existingItem == nil && !itemKind.isComposite
+    }
+
+    private var canRequestSuggestedDetails: Bool {
+        guard shouldShowSuggestionSection else { return false }
+        guard !isSuggestingDetails else { return false }
+        guard MealPhotoAIConfig.client() != nil else { return false }
+        return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var shouldRevealEntryDetails: Bool {
+        existingItem != nil || !trimmedName.isEmpty
     }
 
     @ViewBuilder
@@ -1007,6 +1058,117 @@ private struct FoodEntrySheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .listRowInsets(compactRowInsets)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var photoSection: some View {
+        Section("Photo (Optional)") {
+            VStack(alignment: .leading, spacing: 16) {
+                FoodPhotoPreview(
+                    image: selectedImage,
+                    remoteURL: displayedRemoteURL
+                )
+
+                HStack(spacing: 10) {
+                    PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
+                        Label(selectedImage == nil ? "Choose Photo" : "Change Photo", systemImage: "photo.on.rectangle")
+                            .glassLabel(.text)
+                    }
+
+                    if searchModel.isConfigured {
+                        Button {
+                            photoSource = photoSource == .unsplash ? .local : .unsplash
+                        } label: {
+                            Label(photoSource == .unsplash ? "Use Library Photo" : "Search Unsplash", systemImage: photoSource == .unsplash ? "photo.on.rectangle" : "magnifyingglass")
+                        }
+                        .glassButton(.text)
+                    }
+
+                    if shouldShowRemovePhoto {
+                        Button(role: .destructive) {
+                            clearSelectedPhoto()
+                        } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
+                        .glassButton(.text)
+                    }
+                }
+
+                if photoSource == .unsplash {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Search Unsplash")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if !searchModel.isConfigured {
+                            Text("Unsplash API key is not configured.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack(spacing: 8) {
+                            TextField("Search food photos", text: $searchModel.query)
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .submitLabel(.search)
+                                .onSubmit {
+                                    Task { await searchModel.search() }
+                                }
+                                .textFieldStyle(.roundedBorder)
+
+                            Button("Search") {
+                                Task { await searchModel.search() }
+                            }
+                            .glassButton(.compact)
+                            .disabled(!searchModel.isConfigured || searchModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+
+                        if searchModel.isLoading {
+                            ProgressView("Searching…")
+                                .font(.caption)
+                        } else if let errorMessage = searchModel.errorMessage {
+                            Text(errorMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if isDownloadingRemote {
+                            ProgressView("Downloading photo…")
+                                .font(.caption)
+                        } else if let downloadError {
+                            Text(downloadError)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if !searchModel.results.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHGrid(rows: [GridItem(.fixed(80))], spacing: 12) {
+                                    ForEach(searchModel.results) { photo in
+                                        Button {
+                                            selectRemotePhoto(photo)
+                                        } label: {
+                                            UnsplashResultCell(
+                                                photo: photo,
+                                                isSelected: selectedAttribution?.sourceID == photo.id
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(isDownloadingRemote)
+                                    }
+                                }
+                                .frame(height: 90)
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    }
+                }
+
+                if let attribution = displayedAttribution {
+                    FoodPhotoAttributionView(attribution: attribution)
+                }
             }
         }
     }
@@ -1098,6 +1260,49 @@ private struct FoodEntrySheet: View {
         return units.first(where: { $0.id == unitID })?.allowsDecimal ?? true
     }
 
+    private var trimmedNotes: String? {
+        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func requestSuggestedDetails() {
+        let enteredName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !enteredName.isEmpty else { return }
+        guard let apiKey = MealPhotoAIConfig.apiKey() else {
+            suggestionError = "OpenAI API key missing."
+            return
+        }
+
+        let request = FoodDetailSuggestionRequest(
+            enteredName: enteredName,
+            referenceImage: selectedImage ?? suggestionRequest?.referenceImage,
+            referenceNotes: suggestionRequest?.referenceNotes ?? trimmedNotes
+        )
+
+        suggestionError = nil
+        isSuggestingDetails = true
+
+        Task {
+            do {
+                let client = OpenAIFoodDetailClient(apiKey: apiKey, model: MealPhotoAIConfig.model())
+                let suggestion = try await client.suggestFood(
+                    request: request,
+                    categories: categories,
+                    units: units
+                )
+                await MainActor.run {
+                    applySuggestion(suggestion)
+                    isSuggestingDetails = false
+                }
+            } catch {
+                await MainActor.run {
+                    suggestionError = suggestionErrorMessage(for: error)
+                    isSuggestingDetails = false
+                }
+            }
+        }
+    }
+
     private func roundedAmountValue(_ value: Double) -> Double {
         if isDrinkCategory {
             let symbol = unitSymbol(for: unitID)?.lowercased()
@@ -1110,6 +1315,29 @@ private struct FoodEntrySheet: View {
             return Portion.roundToIncrement(value)
         }
         return value.rounded()
+    }
+
+    private func applySuggestion(_ suggestion: FoodDetailSuggestion) {
+        name = suggestion.name
+        if let categoryID = suggestion.categoryID {
+            self.categoryID = categoryID
+        }
+        amountText = suggestion.amountPerPortion?.cleanNumber ?? ""
+        unitID = suggestion.amountPerPortion == nil ? nil : suggestion.unitID
+        portion = suggestion.portionEquivalent
+        if let notes = suggestion.notes {
+            self.notes = notes
+        }
+        suggestionConfidence = suggestion.confidence
+        ensureDrinkUnitSelection()
+        syncDrinkPortionFromAmount()
+    }
+
+    private func suggestionErrorMessage(for error: Error) -> String {
+        if let clientError = error as? OpenAIMealPhotoClient.ClientError {
+            return clientError.errorDescription ?? "Food suggestion failed."
+        }
+        return error.localizedDescription
     }
 
     private func unitSymbol(for id: UUID?) -> String? {
@@ -1145,6 +1373,7 @@ private struct FoodEntrySheet: View {
             removeExistingImage = false
             selectedAttribution = nil
             photoSelectionKind = .local
+            photoSource = .local
         }
     }
 
@@ -1183,6 +1412,7 @@ private struct FoodEntrySheet: View {
                     removeExistingImage = false
                     selectedAttribution = searchModel.attribution(for: photo)
                     photoSelectionKind = .remote
+                    photoSource = .unsplash
                 }
             } catch {
                 await MainActor.run {
@@ -1203,6 +1433,7 @@ private struct FoodEntrySheet: View {
             removeExistingImage = true
         }
         photoSelectionKind = .none
+        photoSource = .local
     }
 
     private func resolvedAttribution() -> FoodImageAttribution? {

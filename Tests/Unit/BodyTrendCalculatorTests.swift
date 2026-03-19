@@ -2,7 +2,7 @@ import XCTest
 @testable import Core
 
 final class BodyTrendCalculatorTests: XCTestCase {
-    func testSevenDayAverageUsesRecentEntries() {
+    func testSevenDayAverageUsesRecentEntries() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let baseDate = calendar.date(from: DateComponents(year: 2025, month: 1, day: 7))!

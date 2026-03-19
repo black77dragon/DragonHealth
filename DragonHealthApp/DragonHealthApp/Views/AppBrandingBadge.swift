@@ -5,13 +5,9 @@ struct AppBrandingBadge: View {
         HStack(spacing: 6) {
             ZStack {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.accentColor.opacity(0.95), Color.accentColor.opacity(0.55)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    .fill(ZenStyle.elevatedSurface)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
                 Image("AppIconBadge")
                     .resizable()
                     .scaledToFit()
@@ -21,13 +17,7 @@ struct AppBrandingBadge: View {
 
             Text("DragonHealth")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [Color.primary, Color.primary.opacity(0.7)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
+                .foregroundStyle(.primary)
         }
         .accessibilityLabel("DragonHealth")
     }

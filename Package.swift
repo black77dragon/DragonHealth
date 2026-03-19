@@ -17,29 +17,34 @@ let package = Package(
         .target(
             name: "Core",
             path: "Core",
-            exclude: ["DB"]
+            exclude: ["DB", "README.md"]
         ),
         .target(
             name: "CoreDB",
             dependencies: ["Core"],
-            path: "Core/DB"
+            path: "Core/DB",
+            exclude: ["README.md"]
         ),
         .target(
             name: "InfraLogging",
-            path: "Infra/Logging"
+            path: "Infra/Logging",
+            exclude: ["README.md"]
         ),
         .target(
             name: "InfraConfig",
-            path: "Infra/Config"
+            path: "Infra/Config",
+            exclude: ["README.md"]
         ),
         .target(
             name: "InfraFeatureFlags",
-            path: "Infra/FeatureFlags"
+            path: "Infra/FeatureFlags",
+            exclude: ["README.md"]
         ),
         .testTarget(
             name: "CoreTests",
             dependencies: ["Core", "CoreDB"],
-            path: "Tests/Unit"
+            path: "Tests/Unit",
+            exclude: ["README.md"]
         )
     ]
 )

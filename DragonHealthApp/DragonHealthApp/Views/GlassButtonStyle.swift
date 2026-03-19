@@ -102,64 +102,24 @@ private struct GlassButtonBackground: View {
     let isEnabled: Bool
 
     var body: some View {
-        let baseTop = colorScheme == .dark ? Color.white.opacity(0.22) : Color.white.opacity(0.92)
-        let baseBottom = colorScheme == .dark ? Color.white.opacity(0.05) : Color(.systemGray6).opacity(0.86)
-        let tintOpacity = colorScheme == .dark ? (isPressed ? 0.10 : 0.18) : (isPressed ? 0.05 : 0.11)
-        let borderTopOpacity = colorScheme == .dark ? (isEnabled ? 0.58 : 0.30) : (isEnabled ? 0.74 : 0.34)
-        let borderBottomOpacity = colorScheme == .dark ? (isEnabled ? 0.18 : 0.08) : (isEnabled ? 0.22 : 0.10)
-        let shadowOpacity = colorScheme == .dark ? (isPressed ? 0.14 : 0.30) : (isPressed ? 0.06 : 0.12)
+        let fill = colorScheme == .dark
+            ? ZenStyle.surface.opacity(isPressed ? 0.82 : 0.94)
+            : ZenStyle.elevatedSurface.opacity(isPressed ? 0.94 : 1.0)
+        let border = colorScheme == .dark
+            ? Color.white.opacity(isEnabled ? 0.10 : 0.05)
+            : Color.black.opacity(isEnabled ? 0.10 : 0.05)
+        let accentLine = accent.opacity(colorScheme == .dark ? 0.16 : 0.10)
+        let shadowOpacity = colorScheme == .dark ? (isPressed ? 0.08 : 0.18) : (isPressed ? 0.03 : 0.08)
 
         return Capsule()
-            .fill(
-                LinearGradient(
-                    colors: [
-                        baseTop,
-                        baseBottom
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+            .fill(fill)
+            .overlay(
+                Capsule()
+                    .strokeBorder(border, lineWidth: 1)
             )
             .overlay(
-                Capsule().fill(accent.opacity(tintOpacity))
-            )
-            .overlay(
-                Capsule().fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(colorScheme == .dark ? 0.10 : 0.24),
-                            Color.white.opacity(0.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .center
-                    )
-                )
-            )
-            .overlay(
-                Capsule().strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(borderTopOpacity),
-                            Color.white.opacity(borderBottomOpacity)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-            )
-            .overlay(
-                Capsule().strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            Color.black.opacity(colorScheme == .dark ? 0.45 : 0.10),
-                            Color.black.opacity(0.0)
-                        ],
-                        startPoint: .bottom,
-                        endPoint: .top
-                    ),
-                    lineWidth: 0.6
-                )
+                Capsule()
+                    .strokeBorder(accentLine, lineWidth: 0.6)
             )
             .shadow(color: Color.black.opacity(shadowOpacity), radius: isPressed ? 2 : 6, x: 0, y: isPressed ? 1 : 3)
     }

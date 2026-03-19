@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import Core
 import InfraConfig
@@ -14,6 +15,7 @@ struct ContentView: View {
     @StateObject private var healthSyncManager = HealthSyncManager()
     @State private var hasResolvedLaunchSplash = false
     @State private var isSplashVisible = true
+    @State private var showingRestoreBackup = false
     @AppStorage("launchSplash.stoicQuoteIndex") private var stoicQuoteIndex = 0
 
     var body: some View {
@@ -33,6 +35,13 @@ struct ContentView: View {
         .onChange(of: store.settings.showLaunchSplash) { _, _ in
             resolveLaunchSplashIfNeeded()
         }
+        .sheet(isPresented: $showingRestoreBackup) {
+            NavigationStack {
+                RestoreBackupView()
+            }
+            .environmentObject(store)
+            .environmentObject(backupManager)
+        }
         .preferredColorScheme(store.settings.appearance.colorScheme)
         .dynamicTypeSize(store.settings.fontSize.dynamicTypeSize)
     }
@@ -51,6 +60,32 @@ struct ContentView: View {
         return ((stoicQuoteIndex % count) + count) % count
     }
 
+    private var shouldPerformLaunchHealthSync: Bool {
+#if targetEnvironment(simulator)
+        let processInfo = ProcessInfo.processInfo
+        if processInfo.arguments.contains("--skip-launch-health-sync") {
+            return false
+        }
+        if processInfo.environment["DRAGONHEALTH_SKIP_LAUNCH_HEALTH_SYNC"] == "1" {
+            return false
+        }
+#endif
+        return true
+    }
+
+    private var shouldSkipLaunchSplashForTesting: Bool {
+#if targetEnvironment(simulator)
+        let processInfo = ProcessInfo.processInfo
+        if processInfo.arguments.contains("--skip-launch-splash") {
+            return true
+        }
+        if processInfo.environment["DRAGONHEALTH_SKIP_LAUNCH_SPLASH"] == "1" {
+            return true
+        }
+#endif
+        return false
+    }
+
     @ViewBuilder
     private var mainContent: some View {
         switch store.loadState {
@@ -58,20 +93,52 @@ struct ContentView: View {
             ProgressView("Loading DragonHealth")
                 .accessibilityLabel("Loading DragonHealth")
         case .failed(let message):
-            VStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.title)
-                Text("Unable to load data")
-                    .font(.headline)
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(spacing: ZenSpacing.card) {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(ZenStyle.surface)
+                    .frame(width: 72, height: 72)
+                    .overlay {
+                        Image(systemName: "externaldrive.badge.exclamationmark")
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+
+                VStack(spacing: ZenSpacing.text) {
+                    Text("Unable to load DragonHealth")
+                        .zenHeroTitle()
+                    Text(message)
+                        .zenSupportText()
+                        .multilineTextAlignment(.center)
+                    Text("You can retry now or restore a backup if the database needs recovery.")
+                        .zenSupportText()
+                        .multilineTextAlignment(.center)
+                }
+
+                VStack(spacing: 10) {
+                    Button {
+                        Task { await store.reload() }
+                    } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .glassButton(.text)
+
+                    Button {
+                        showingRestoreBackup = true
+                    } label: {
+                        Label("Restore Backup", systemImage: "arrow.counterclockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .glassButton(.text)
+                }
             }
-            .padding()
+            .padding(24)
+            .frame(maxWidth: 420)
+            .zenCard(cornerRadius: 24)
         case .ready:
             TabView {
                 NavigationStack { DailyHubView() }
-                    .tabItem { Label("Daily", systemImage: "sun.max") }
+                    .tabItem { Label("Journal", systemImage: "calendar") }
                 NavigationStack { NightGuardView() }
                     .tabItem { Label("Night Guard", systemImage: "moon.stars") }
                 NavigationStack { BodyMetricsView() }
@@ -91,7 +158,9 @@ struct ContentView: View {
                     "flags": "\(featureFlags.allFlags().count)"
                 ])
                 backupManager.performBackupIfNeeded()
-                healthSyncManager.performSyncOnLaunch(store: store)
+                if shouldPerformLaunchHealthSync {
+                    healthSyncManager.performSyncOnLaunch(store: store)
+                }
             }
             .alert(
                 "Action Failed",
@@ -114,6 +183,11 @@ struct ContentView: View {
     }
 
     private func resolveLaunchSplashIfNeeded() {
+        guard !shouldSkipLaunchSplashForTesting else {
+            isSplashVisible = false
+            hasResolvedLaunchSplash = true
+            return
+        }
         guard store.settings.showLaunchSplash else {
             isSplashVisible = false
             hasResolvedLaunchSplash = true
@@ -160,35 +234,23 @@ private struct LaunchSplashView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    Color(.systemBackground),
-                    Color.accentColor.opacity(0.12)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-
-            Circle()
-                .fill(Color.accentColor.opacity(0.12))
-                .frame(width: 320, height: 320)
-                .blur(radius: 2)
-                .offset(x: -140, y: -260)
-
-            Circle()
-                .fill(Color.accentColor.opacity(0.08))
-                .frame(width: 220, height: 220)
-                .blur(radius: 1)
-                .offset(x: 160, y: 260)
+            ZenStyle.pageBackground
+                .ignoresSafeArea()
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 24) {
                     VStack(spacing: 14) {
-                        Image("AppIconBadge")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 180, height: 180)
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                .fill(ZenStyle.elevatedSurface)
+                            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                            Image("AppIconBadge")
+                                .resizable()
+                                .scaledToFit()
+                                .padding(18)
+                        }
+                        .frame(width: 180, height: 180)
 
                         Text("DragonHealth")
                             .font(.system(.title, design: .serif))
@@ -196,9 +258,7 @@ private struct LaunchSplashView: View {
 
                         VStack(spacing: 4) {
                             Text("Author")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
+                                .zenEyebrow()
                             Text("Rene W. Keller")
                                 .font(.footnote)
                                 .fontWeight(.semibold)
@@ -224,23 +284,15 @@ private struct LaunchSplashView: View {
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text("This is relevant for you because ...")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
+                                .zenMetricLabel()
                             Text(quote.relevance)
-                                .font(.subheadline)
+                                .font(.footnote)
                                 .foregroundStyle(.primary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .padding(18)
-                    .background(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .fill(Color(.secondarySystemBackground).opacity(0.92))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(Color.white.opacity(0.55), lineWidth: 1)
-                    )
+                    .zenCard(cornerRadius: 22)
 
                     VStack(spacing: 12) {
                         Button("OK") {

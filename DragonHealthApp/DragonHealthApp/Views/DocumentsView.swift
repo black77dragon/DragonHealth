@@ -228,14 +228,12 @@ private struct DocumentsHeroCard: View {
     @Binding var sortOrder: DocumentsSortOrder
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: ZenSpacing.section) {
+            VStack(alignment: .leading, spacing: ZenSpacing.text) {
                 Text("Records library")
-                    .font(.caption.weight(.semibold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.secondary)
+                    .zenEyebrow()
                 Text("Keep the important paperwork easy to find, preview, and sort.")
-                    .font(.title3.weight(.semibold))
+                    .zenHeroTitle()
                 HStack(spacing: 12) {
                     DocumentsHeroMetric(label: "Total", value: "\(documentCount)")
                     DocumentsHeroMetric(label: "PDFs", value: "\(pdfCount)")
@@ -250,17 +248,8 @@ private struct DocumentsHeroCard: View {
             }
             .pickerStyle(.segmented)
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.indigo.opacity(0.15), Color.blue.opacity(0.08), Color(.secondarySystemBackground)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        .padding(ZenSpacing.card)
+        .zenCard(cornerRadius: 24)
     }
 }
 
@@ -271,17 +260,13 @@ private struct DocumentsHeroMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenMetricLabel()
             Text(value)
-                .font(.headline.monospacedDigit())
+                .zenMetricValue()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.thinMaterial)
-        )
+        .zenCard(cornerRadius: 14)
     }
 }
 
@@ -292,17 +277,13 @@ private struct DocumentsEmptyStateCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.headline)
+                .zenSectionTitle()
             Text(message)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                .zenSupportText()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .zenCard()
     }
 }
 

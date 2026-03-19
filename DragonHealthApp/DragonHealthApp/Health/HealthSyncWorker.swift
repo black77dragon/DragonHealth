@@ -238,40 +238,19 @@ actor HealthSyncWorker {
 
     private func storeHealthValues(_ values: [Date: HealthDayValues]) async throws {
         guard !values.isEmpty else { return }
-        let db = try SQLiteDatabase(path: AppStore.databaseURL().path, calendar: calendar)
-        let existingEntries = try await db.fetchBodyMetrics()
-        let dayBoundary = DayBoundary(cutoffMinutes: 0)
-        var existingByDay: [String: BodyMetricEntry] = [:]
-        for entry in existingEntries {
-            let key = dayBoundary.dayKey(for: entry.date, calendar: calendar)
-            existingByDay[key] = entry
-        }
-
-        for (date, health) in values {
-            let day = calendar.startOfDay(for: date)
-            let key = dayBoundary.dayKey(for: day, calendar: calendar)
-            let existing = existingByDay[key]
-            let merged = BodyMetricEntry(
-                date: day,
-                weightKg: existing?.weightKg ?? health.weightKg,
-                muscleMass: existing?.muscleMass ?? health.leanMassKg,
-                bodyFatPercent: existing?.bodyFatPercent ?? health.bodyFatPercent,
-                waistCm: existing?.waistCm ?? health.waistCm,
-                steps: existing?.steps ?? health.steps,
-                activeEnergyKcal: existing?.activeEnergyKcal ?? health.activeEnergyKcal
+        let store = try openBodyMetricsStore(path: AppStore.databaseURL().path, calendar: calendar)
+        let importedEntries = values.map { date, health in
+            BodyMetricEntry(
+                date: date,
+                weightKg: health.weightKg,
+                muscleMass: health.leanMassKg,
+                bodyFatPercent: health.bodyFatPercent,
+                waistCm: health.waistCm,
+                steps: health.steps,
+                activeEnergyKcal: health.activeEnergyKcal
             )
-
-            if merged.weightKg == nil,
-               merged.muscleMass == nil,
-               merged.bodyFatPercent == nil,
-               merged.waistCm == nil,
-               merged.steps == nil,
-               merged.activeEnergyKcal == nil {
-                continue
-            }
-
-            try await db.upsertBodyMetric(merged)
         }
+        try await store.importHealthMetrics(importedEntries)
     }
 
     private func fetchLatestSamplesByDay(

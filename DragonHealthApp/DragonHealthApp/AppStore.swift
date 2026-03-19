@@ -16,6 +16,65 @@ final class AppStore: ObservableObject {
         case failed(String)
     }
 
+    struct HistoryInvalidation: Equatable {
+        let token: UUID
+        let changedDay: Date?
+        let reloadSelectedDay: Bool
+        let reloadCalendarIndicators: Bool
+        let reloadScoreHistory: Bool
+
+        init(
+            token: UUID = UUID(),
+            changedDay: Date? = nil,
+            reloadSelectedDay: Bool = false,
+            reloadCalendarIndicators: Bool = false,
+            reloadScoreHistory: Bool = false
+        ) {
+            self.token = token
+            self.changedDay = changedDay
+            self.reloadSelectedDay = reloadSelectedDay
+            self.reloadCalendarIndicators = reloadCalendarIndicators
+            self.reloadScoreHistory = reloadScoreHistory
+        }
+    }
+
+    struct LogPortionRequest: Sendable {
+        let mealSlotID: UUID
+        let categoryID: UUID
+        let portion: Core.Portion
+        let amountValue: Double?
+        let amountUnitID: UUID?
+        let notes: String?
+        let foodItemID: UUID?
+        let compositeGroupID: UUID?
+        let compositeFoodID: UUID?
+        let compositeFoodName: String?
+
+        init(
+            mealSlotID: UUID,
+            categoryID: UUID,
+            portion: Core.Portion,
+            amountValue: Double? = nil,
+            amountUnitID: UUID? = nil,
+            notes: String?,
+            foodItemID: UUID? = nil,
+            compositeGroupID: UUID? = nil,
+            compositeFoodID: UUID? = nil,
+            compositeFoodName: String? = nil
+        ) {
+            self.mealSlotID = mealSlotID
+            self.categoryID = categoryID
+            self.portion = portion
+            self.amountValue = amountValue
+            self.amountUnitID = amountUnitID
+            self.notes = notes
+            self.foodItemID = foodItemID
+            self.compositeGroupID = compositeGroupID
+            self.compositeFoodID = compositeFoodID
+            self.compositeFoodName = compositeFoodName
+        }
+    }
+
     @Published private(set) var loadState: LoadState = .loading
     @Published private(set) var categories: [Core.Category] = []
     @Published private(set) var units: [Core.FoodUnit] = []
@@ -28,6 +87,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var compensationRules: [Core.CompensationRule] = []
     @Published private(set) var settings: Core.AppSettings = .defaultValue
     @Published var refreshToken = UUID()
+    @Published private(set) var historyInvalidation = HistoryInvalidation()
     @Published private(set) var operationErrorMessage: String?
 
     private let db: SQLiteDatabase?
@@ -35,6 +95,33 @@ final class AppStore: ObservableObject {
 
     var appCalendar: Calendar {
         calendar
+    }
+
+    private var dailyLogStore: DailyLogStore {
+        DailyLogStore(
+            db: db,
+            calendar: calendar,
+            dayBoundary: dayBoundary,
+            categories: categories,
+            units: units,
+            foodItems: foodItems,
+            onPersist: { [self] day in
+                self.invalidateForDailyLogChange(on: day)
+            },
+            onError: { [self] message in
+                self.recordOperationError(message)
+            }
+        )
+    }
+
+    private var bodyMetricsStore: BodyMetricsStore? {
+        guard let db else { return nil }
+        return BodyMetricsStore(db: db, calendar: calendar)
+    }
+
+    private var foodLibraryStore: FoodLibraryStore? {
+        guard let db else { return nil }
+        return FoodLibraryStore(db: db)
     }
 
     init(calendar: Calendar = .autoupdatingCurrent) {
@@ -92,30 +179,6 @@ final class AppStore: ObservableObject {
         Self.defaultMealSlotTimings(mealSlots: mealSlots, dayCutoffMinutes: settings.dayCutoffMinutes)
     }
 
-    private func normalizedDay(for date: Date) -> Date {
-        normalizedDay(for: date, treatStartOfDayAsDayOnly: false)
-    }
-
-    private func normalizedDay(for date: Date, treatStartOfDayAsDayOnly: Bool) -> Date {
-        guard treatStartOfDayAsDayOnly else {
-            return dayBoundary.dayStart(for: date, calendar: calendar)
-        }
-        let dayStart = calendar.startOfDay(for: date)
-        let referenceDate: Date
-        if date.timeIntervalSince(dayStart) == 0,
-           let safeReference = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: dayStart) {
-            referenceDate = safeReference
-        } else {
-            referenceDate = date
-        }
-        return dayBoundary.dayStart(for: referenceDate, calendar: calendar)
-    }
-
-    private func normalizedNotes(_ notes: String?) -> String? {
-        let trimmed = notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
     private func minuteOfDay(for date: Date) -> Int {
         let components = calendar.dateComponents([.hour, .minute], from: date)
         return (components.hour ?? 0) * 60 + (components.minute ?? 0)
@@ -129,131 +192,58 @@ final class AppStore: ObservableObject {
         recordOperationError("\(context): \(error.localizedDescription)")
     }
 
+    private func bumpRefreshToken() {
+        refreshToken = UUID()
+    }
+
+    private func invalidateHistory(
+        changedDay: Date? = nil,
+        reloadSelectedDay: Bool = false,
+        reloadCalendarIndicators: Bool = false,
+        reloadScoreHistory: Bool = false
+    ) {
+        historyInvalidation = HistoryInvalidation(
+            changedDay: changedDay,
+            reloadSelectedDay: reloadSelectedDay,
+            reloadCalendarIndicators: reloadCalendarIndicators,
+            reloadScoreHistory: reloadScoreHistory
+        )
+    }
+
+    private func invalidateForDailyLogChange(on day: Date) {
+        bumpRefreshToken()
+        invalidateHistory(
+            changedDay: day,
+            reloadSelectedDay: true,
+            reloadCalendarIndicators: true,
+            reloadScoreHistory: true
+        )
+    }
+
+    private func invalidateHistoryGlobally() {
+        bumpRefreshToken()
+        invalidateHistory(
+            reloadSelectedDay: true,
+            reloadCalendarIndicators: true,
+            reloadScoreHistory: true
+        )
+    }
+
     func loadAll() async {
         guard let db else { return }
         do {
-            var loadedCategories = try await db.fetchCategories()
-            if loadedCategories.isEmpty {
-                loadedCategories = AppDefaults.categories
-                for category in loadedCategories {
-                    try await db.upsertCategory(category)
-                }
-            }
-            if !loadedCategories.contains(where: { Self.normalizedCategoryName($0.name) == "carb" }) {
-                var renamedCategories = loadedCategories
-                var didRename = false
-                for index in renamedCategories.indices {
-                    if Self.isLegacyCarbCategoryName(renamedCategories[index].name) {
-                        renamedCategories[index].name = "Carb"
-                        didRename = true
-                    }
-                }
-                if didRename {
-                    for category in renamedCategories {
-                        try await db.upsertCategory(category)
-                    }
-                    loadedCategories = try await db.fetchCategories()
-                }
-            }
+            let snapshot = try await AppBootstrapLoader(
+                db: db,
+                resolveMealSlotTimings: Self.resolvedMealSlotTimings(mealSlots:settings:),
+                normalizedCategoryName: Self.normalizedCategoryName(_:),
+                isLegacyCarbCategoryName: Self.isLegacyCarbCategoryName(_:)
+            ).load()
 
-            var loadedMealSlots = try await db.fetchMealSlots()
-            if loadedMealSlots.isEmpty {
-                loadedMealSlots = AppDefaults.mealSlots
-                for slot in loadedMealSlots {
-                    try await db.upsertMealSlot(slot)
-                }
-            }
+            apply(snapshot)
 
-            var loadedUnits = try await db.fetchUnits()
-            if loadedUnits.isEmpty {
-                loadedUnits = AppDefaults.units
-                for unit in loadedUnits {
-                    try await db.upsertUnit(unit)
-                }
-                loadedUnits = try await db.fetchUnits()
-            } else {
-                let existingSymbols = Set(loadedUnits.map { $0.symbol.lowercased() })
-                let missingUnits = AppDefaults.units.filter { !existingSymbols.contains($0.symbol.lowercased()) }
-                if !missingUnits.isEmpty {
-                    for unit in missingUnits {
-                        try await db.upsertUnit(unit)
-                    }
-                    loadedUnits = try await db.fetchUnits()
-                }
-            }
-
-            var loadedSettings = try await db.fetchSettings()
-            let resolvedTimings = Self.resolvedMealSlotTimings(mealSlots: loadedMealSlots, settings: loadedSettings)
-            if resolvedTimings != loadedSettings.mealSlotTimings {
-                loadedSettings.mealSlotTimings = resolvedTimings
-                try await db.updateSettings(loadedSettings)
-            } else {
-                try await db.updateSettings(loadedSettings)
-            }
-
-            var loadedFoodItems = try await db.fetchFoodItems()
-            var didSeedFoodItems = false
-            if loadedFoodItems.isEmpty {
-                let defaults = AppDefaults.foodItems(categories: loadedCategories, units: loadedUnits)
-                if !defaults.isEmpty {
-                    for item in defaults {
-                        try await db.upsertFoodItem(item)
-                    }
-                    loadedFoodItems = try await db.fetchFoodItems()
-                    didSeedFoodItems = true
-                }
-            } else if loadedSettings.foodSeedVersion < AppDefaults.foodSeedVersion {
-                let missing = AppDefaults.missingFoodItems(existing: loadedFoodItems, categories: loadedCategories, units: loadedUnits)
-                if !missing.isEmpty {
-                    for item in missing {
-                        try await db.upsertFoodItem(item)
-                    }
-                    loadedFoodItems = try await db.fetchFoodItems()
-                }
-                let enriched = AppDefaults.enrichFoodItems(existing: loadedFoodItems, categories: loadedCategories, units: loadedUnits)
-                if !enriched.isEmpty {
-                    for item in enriched {
-                        try await db.upsertFoodItem(item)
-                    }
-                    loadedFoodItems = try await db.fetchFoodItems()
-                }
-                didSeedFoodItems = true
-            }
-            if didSeedFoodItems, loadedSettings.foodSeedVersion < AppDefaults.foodSeedVersion {
-                loadedSettings.foodSeedVersion = AppDefaults.foodSeedVersion
-                try await db.updateSettings(loadedSettings)
-            }
-            let loadedMetrics = try await db.fetchBodyMetrics()
-            let loadedMeetings = try await db.fetchCareMeetings()
-            let loadedDocuments = try await db.fetchDocuments()
-            let loadedScoreProfiles = try await db.fetchScoreProfiles()
-            var loadedCompensationRules = try await db.fetchCompensationRules()
-            if loadedCompensationRules.isEmpty {
-                let defaults = Core.CompensationRule.defaultRules(for: loadedCategories)
-                if !defaults.isEmpty {
-                    for rule in defaults {
-                        try await db.upsertCompensationRule(rule)
-                    }
-                    loadedCompensationRules = try await db.fetchCompensationRules()
-                }
-            }
-
-            categories = loadedCategories.sorted(by: { $0.sortOrder < $1.sortOrder })
-            units = loadedUnits.sorted(by: { $0.sortOrder < $1.sortOrder })
-            mealSlots = loadedMealSlots.sorted(by: { $0.sortOrder < $1.sortOrder })
-            settings = loadedSettings
-            foodItems = loadedFoodItems
-            bodyMetrics = loadedMetrics.sorted(by: { $0.date > $1.date })
-            careMeetings = loadedMeetings.sorted(by: { $0.date > $1.date })
-            documents = loadedDocuments.sorted(by: { $0.createdAt > $1.createdAt })
-            let categoryIDs = Set(categories.map(\.id))
-            scoreProfiles = loadedScoreProfiles.filter { categoryIDs.contains($0.key) }
-            compensationRules = loadedCompensationRules.filter { categoryIDs.contains($0.fromCategoryID) && categoryIDs.contains($0.toCategoryID) }
-
-            let foodImagePaths = loadedFoodItems.compactMap(\.imagePath)
-            if !foodImagePaths.isEmpty {
+            if !snapshot.foodImagePaths.isEmpty {
                 Task(priority: .utility) {
-                    FoodImageStorage.resizeExistingImagesIfNeeded(imagePaths: foodImagePaths)
+                    FoodImageStorage.resizeExistingImagesIfNeeded(imagePaths: snapshot.foodImagePaths)
                 }
             }
 
@@ -265,7 +255,20 @@ final class AppStore: ObservableObject {
 
     func reload() async {
         await loadAll()
-        refreshToken = UUID()
+        invalidateHistoryGlobally()
+    }
+
+    private func apply(_ snapshot: AppBootstrapSnapshot) {
+        categories = snapshot.categories
+        units = snapshot.units
+        mealSlots = snapshot.mealSlots
+        settings = snapshot.settings
+        foodItems = snapshot.foodItems
+        bodyMetrics = snapshot.bodyMetrics
+        careMeetings = snapshot.careMeetings
+        documents = snapshot.documents
+        scoreProfiles = snapshot.scoreProfiles
+        compensationRules = snapshot.compensationRules
     }
 
     func saveCategory(_ category: Core.Category) async {
@@ -273,7 +276,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.upsertCategory(category)
             await loadAll()
-            refreshToken = UUID()
+            invalidateHistoryGlobally()
         } catch {
             handleOperationError("Category error", error)
         }
@@ -284,7 +287,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.deleteCategory(id: category.id)
             await loadAll()
-            refreshToken = UUID()
+            invalidateHistoryGlobally()
         } catch {
             handleOperationError("Category error", error)
         }
@@ -295,7 +298,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.upsertScoreProfile(categoryID: categoryID, profile: profile)
             scoreProfiles = try await db.fetchScoreProfiles()
-            refreshToken = UUID()
+            invalidateHistoryGlobally()
         } catch {
             handleOperationError("Scoring error", error)
         }
@@ -306,7 +309,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.deleteScoreProfile(categoryID: categoryID)
             scoreProfiles = try await db.fetchScoreProfiles()
-            refreshToken = UUID()
+            invalidateHistoryGlobally()
         } catch {
             handleOperationError("Scoring error", error)
         }
@@ -317,7 +320,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.upsertCompensationRule(rule)
             compensationRules = try await db.fetchCompensationRules()
-            refreshToken = UUID()
+            invalidateHistoryGlobally()
         } catch {
             handleOperationError("Scoring error", error)
         }
@@ -328,7 +331,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.deleteCompensationRule(rule)
             compensationRules = try await db.fetchCompensationRules()
-            refreshToken = UUID()
+            invalidateHistoryGlobally()
         } catch {
             handleOperationError("Scoring error", error)
         }
@@ -339,7 +342,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.upsertUnit(unit)
             units = try await db.fetchUnits()
-            refreshToken = UUID()
+            bumpRefreshToken()
         } catch {
             handleOperationError("Unit error", error)
         }
@@ -350,7 +353,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.upsertMealSlot(mealSlot)
             await loadAll()
-            refreshToken = UUID()
+            bumpRefreshToken()
         } catch {
             handleOperationError("Meal slot error", error)
         }
@@ -361,7 +364,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.deleteMealSlot(id: mealSlot.id)
             await loadAll()
-            refreshToken = UUID()
+            bumpRefreshToken()
         } catch {
             handleOperationError("Meal slot error", error)
         }
@@ -372,32 +375,41 @@ final class AppStore: ObservableObject {
         do {
             try await db.updateSettings(settings)
             self.settings = settings
-            refreshToken = UUID()
+            invalidateHistoryGlobally()
         } catch {
             handleOperationError("Settings error", error)
         }
     }
 
     func saveFoodItem(_ item: Core.FoodItem) async {
-        guard let db else { return }
+        guard let foodLibraryStore else { return }
         do {
-            try await db.upsertFoodItem(item)
-            foodItems = try await db.fetchFoodItems()
-            refreshToken = UUID()
+            foodItems = try await foodLibraryStore.save(item)
+            bumpRefreshToken()
         } catch {
             handleOperationError("Food error", error)
         }
     }
 
+    func saveFoodItemReturningError(_ item: Core.FoodItem) async -> String? {
+        guard let foodLibraryStore else { return "Database is unavailable." }
+        do {
+            foodItems = try await foodLibraryStore.save(item)
+            bumpRefreshToken()
+            return nil
+        } catch {
+            let message = "Food error: \(error.localizedDescription)"
+            recordOperationError(message)
+            return message
+        }
+    }
+
     func upsertFoodItems(_ items: [Core.FoodItem]) async -> String? {
-        guard let db else { return "Database is unavailable." }
+        guard let foodLibraryStore else { return "Database is unavailable." }
         guard !items.isEmpty else { return nil }
         do {
-            for item in items {
-                try await db.upsertFoodItem(item)
-            }
-            foodItems = try await db.fetchFoodItems()
-            refreshToken = UUID()
+            foodItems = try await foodLibraryStore.saveAll(items)
+            bumpRefreshToken()
             return nil
         } catch {
             let message = "Food import error: \(error.localizedDescription)"
@@ -407,25 +419,20 @@ final class AppStore: ObservableObject {
     }
 
     func deleteFoodItem(_ item: Core.FoodItem) async {
-        guard let db else { return }
+        guard let foodLibraryStore else { return }
         do {
-            try await db.deleteFoodItem(id: item.id)
-            if let imagePath = item.imagePath {
-                try? FoodImageStorage.deleteImage(fileName: imagePath)
-            }
-            foodItems = try await db.fetchFoodItems()
-            refreshToken = UUID()
+            foodItems = try await foodLibraryStore.delete(item)
+            bumpRefreshToken()
         } catch {
             handleOperationError("Food error", error)
         }
     }
 
     func saveBodyMetric(_ entry: Core.BodyMetricEntry) async {
-        guard let db else { return }
+        guard let bodyMetricsStore else { return }
         do {
-            try await db.upsertBodyMetric(entry)
-            bodyMetrics = try await db.fetchBodyMetrics()
-            refreshToken = UUID()
+            bodyMetrics = try await bodyMetricsStore.save(entry)
+            bumpRefreshToken()
         } catch {
             handleOperationError("Body metric error", error)
         }
@@ -436,7 +443,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.upsertCareMeeting(meeting)
             careMeetings = try await db.fetchCareMeetings()
-            refreshToken = UUID()
+            bumpRefreshToken()
         } catch {
             handleOperationError("Care meeting error", error)
         }
@@ -447,7 +454,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.deleteCareMeeting(id: meeting.id)
             careMeetings = try await db.fetchCareMeetings()
-            refreshToken = UUID()
+            bumpRefreshToken()
         } catch {
             handleOperationError("Care meeting error", error)
         }
@@ -458,7 +465,7 @@ final class AppStore: ObservableObject {
         do {
             try await db.upsertDocument(document)
             documents = try await db.fetchDocuments()
-            refreshToken = UUID()
+            bumpRefreshToken()
         } catch {
             handleOperationError("Document error", error)
         }
@@ -469,87 +476,66 @@ final class AppStore: ObservableObject {
         do {
             try await db.deleteDocument(id: document.id)
             documents = try await db.fetchDocuments()
-            refreshToken = UUID()
+            bumpRefreshToken()
         } catch {
             handleOperationError("Document error", error)
         }
     }
 
     func fetchDailyLog(for date: Date) async -> Core.DailyLog? {
-        let day = normalizedDay(for: date)
-        return await fetchDailyLogForDay(day)
+        await dailyLogStore.fetchDailyLog(for: date)
     }
 
     func fetchHistoryIndicators(start: Date, end: Date) async -> [String: HistoryDayIndicator] {
-        guard let db else { return [:] }
+        let totalsByDay = await fetchDailyTotalsByDay(start: start, end: end)
+        guard !totalsByDay.isEmpty else { return [:] }
         let evaluator = DailyScoreEvaluator()
+        var indicators: [String: HistoryDayIndicator] = [:]
+        for (dayKey, totalsByCategoryID) in totalsByDay {
+            let summary = evaluator.evaluate(
+                categories: categories,
+                totalsByCategoryID: totalsByCategoryID,
+                profilesByCategoryID: scoreProfiles,
+                compensationRules: compensationRules
+            )
+            indicators[dayKey] = .score(summary.overallScore)
+        }
+        return indicators
+    }
+
+    func fetchScoreHistory(start: Date, end: Date) async -> [ScoreHistoryEntry] {
+        let totalsByDay = await fetchDailyTotalsByDay(start: start, end: end)
+        guard !totalsByDay.isEmpty else { return [] }
+        let evaluator = DailyScoreEvaluator()
+        let calendar = appCalendar
+        var entries: [ScoreHistoryEntry] = []
+        for (dayKey, totalsByCategoryID) in totalsByDay {
+            guard let day = DayKeyParser.date(from: dayKey, timeZone: calendar.timeZone) else { continue }
+            let summary = evaluator.evaluate(
+                categories: categories,
+                totalsByCategoryID: totalsByCategoryID,
+                profilesByCategoryID: scoreProfiles,
+                compensationRules: compensationRules
+            )
+            entries.append(ScoreHistoryEntry(date: day, score: summary.overallScore))
+        }
+        return entries.sorted(by: { $0.date < $1.date })
+    }
+
+    func fetchDailyTotalsByDay(start: Date, end: Date) async -> [String: [UUID: Double]] {
+        guard let db else { return [:] }
         let rangeStart = min(start, end)
         let rangeEnd = max(start, end)
         do {
-            let totalsByDay = try await db.fetchDailyTotalsByDay(start: rangeStart, end: rangeEnd)
-            var indicators: [String: HistoryDayIndicator] = [:]
-            for (dayKey, totalsByCategoryID) in totalsByDay {
-                let summary = evaluator.evaluate(
-                    categories: categories,
-                    totalsByCategoryID: totalsByCategoryID,
-                    profilesByCategoryID: scoreProfiles,
-                    compensationRules: compensationRules
-                )
-                indicators[dayKey] = .score(summary.overallScore)
-            }
-            return indicators
+            return try await db.fetchDailyTotalsByDay(start: rangeStart, end: rangeEnd)
         } catch {
             handleOperationError("Log error", error)
             return [:]
         }
     }
 
-    func fetchScoreHistory(start: Date, end: Date) async -> [ScoreHistoryEntry] {
-        guard let db else { return [] }
-        let evaluator = DailyScoreEvaluator()
-        let rangeStart = min(start, end)
-        let rangeEnd = max(start, end)
-        do {
-            let totalsByDay = try await db.fetchDailyTotalsByDay(start: rangeStart, end: rangeEnd)
-            let calendar = appCalendar
-            var entries: [ScoreHistoryEntry] = []
-            for (dayKey, totalsByCategoryID) in totalsByDay {
-                guard let day = DayKeyParser.date(from: dayKey, timeZone: calendar.timeZone) else { continue }
-                let summary = evaluator.evaluate(
-                    categories: categories,
-                    totalsByCategoryID: totalsByCategoryID,
-                    profilesByCategoryID: scoreProfiles,
-                    compensationRules: compensationRules
-                )
-                entries.append(ScoreHistoryEntry(date: day, score: summary.overallScore))
-            }
-            return entries.sorted(by: { $0.date < $1.date })
-        } catch {
-            handleOperationError("Log error", error)
-            return []
-        }
-    }
-
     func saveDailyLog(_ log: Core.DailyLog) async {
-        let day = normalizedDay(for: log.date, treatStartOfDayAsDayOnly: true)
-        let normalizedEntries = log.entries.map { entry in
-            Core.DailyLogEntry(
-                id: entry.id,
-                date: day,
-                mealSlotID: entry.mealSlotID,
-                categoryID: entry.categoryID,
-                portion: entry.portion,
-                amountValue: entry.amountValue,
-                amountUnitID: entry.amountUnitID,
-                notes: entry.notes,
-                foodItemID: entry.foodItemID,
-                compositeGroupID: entry.compositeGroupID,
-                compositeFoodID: entry.compositeFoodID,
-                compositeFoodName: entry.compositeFoodName
-            )
-        }
-        let normalizedLog = Core.DailyLog(id: log.id, date: day, entries: normalizedEntries)
-        await persistDailyLog(normalizedLog)
+        await dailyLogStore.saveDailyLog(log)
     }
 
     func updateEntry(
@@ -562,37 +548,20 @@ final class AppStore: ObservableObject {
         notes: String?,
         foodItemID: UUID?
     ) async {
-        let day = normalizedDay(for: entry.date, treatStartOfDayAsDayOnly: true)
-        guard var log = await fetchDailyLogForDay(day) else { return }
-        guard let index = log.entries.firstIndex(where: { $0.id == entry.id }) else { return }
-        let resolvedPortion = resolvedPortionForLogging(
+        await dailyLogStore.updateEntry(
+            entry,
+            mealSlotID: mealSlotID,
             categoryID: categoryID,
             portion: portion,
             amountValue: amountValue,
-            amountUnitID: amountUnitID
-        )
-        log.entries[index] = Core.DailyLogEntry(
-            id: entry.id,
-            date: day,
-            mealSlotID: mealSlotID,
-            categoryID: categoryID,
-            portion: resolvedPortion,
-            amountValue: amountValue,
             amountUnitID: amountUnitID,
-            notes: normalizedNotes(notes),
-            foodItemID: foodItemID,
-            compositeGroupID: entry.compositeGroupID,
-            compositeFoodID: entry.compositeFoodID,
-            compositeFoodName: entry.compositeFoodName
+            notes: notes,
+            foodItemID: foodItemID
         )
-        await persistDailyLog(log)
     }
 
     func deleteEntry(_ entry: Core.DailyLogEntry) async {
-        let day = normalizedDay(for: entry.date, treatStartOfDayAsDayOnly: true)
-        guard var log = await fetchDailyLogForDay(day) else { return }
-        log.entries.removeAll { $0.id == entry.id }
-        await persistDailyLog(log)
+        await dailyLogStore.deleteEntry(entry)
     }
 
     func logPortion(
@@ -608,30 +577,30 @@ final class AppStore: ObservableObject {
         compositeFoodID: UUID? = nil,
         compositeFoodName: String? = nil
     ) async {
-        let day = normalizedDay(for: date)
-        var log = await fetchDailyLogForDay(day) ?? Core.DailyLog(date: day, entries: [])
-        let resolvedPortion = resolvedPortionForLogging(
-            categoryID: categoryID,
-            portion: portion,
-            amountValue: amountValue,
-            amountUnitID: amountUnitID
+        await logPortions(
+            date: date,
+            requests: [
+                LogPortionRequest(
+                    mealSlotID: mealSlotID,
+                    categoryID: categoryID,
+                    portion: portion,
+                    amountValue: amountValue,
+                    amountUnitID: amountUnitID,
+                    notes: notes,
+                    foodItemID: foodItemID,
+                    compositeGroupID: compositeGroupID,
+                    compositeFoodID: compositeFoodID,
+                    compositeFoodName: compositeFoodName
+                )
+            ]
         )
-        log.entries.append(
-            Core.DailyLogEntry(
-                date: day,
-                mealSlotID: mealSlotID,
-                categoryID: categoryID,
-                portion: resolvedPortion,
-                amountValue: amountValue,
-                amountUnitID: amountUnitID,
-                notes: normalizedNotes(notes),
-                foodItemID: foodItemID,
-                compositeGroupID: compositeGroupID,
-                compositeFoodID: compositeFoodID,
-                compositeFoodName: compositeFoodName
-            )
-        )
-        await persistDailyLog(log)
+    }
+
+    func logPortions(
+        date: Date,
+        requests: [LogPortionRequest]
+    ) async {
+        await dailyLogStore.logPortions(date: date, requests: requests)
     }
 
     func logFoodSelection(
@@ -644,26 +613,10 @@ final class AppStore: ObservableObject {
         notes: String?,
         foodItemID: UUID?
     ) async {
-        let selectedFood = foodItemID.flatMap { id in
-            foodItems.first(where: { $0.id == id })
-        }
-        if let selectedFood, selectedFood.kind.isComposite {
-            await logCompositeFood(
-                selectedFood,
-                date: date,
-                mealSlotID: mealSlotID,
-                basePortion: portion,
-                notes: notes
-            )
-            return
-        }
-
-        let resolvedCategoryID = categoryID ?? selectedFood?.categoryID
-        guard let resolvedCategoryID else { return }
-        await logPortion(
+        await dailyLogStore.logFoodSelection(
             date: date,
             mealSlotID: mealSlotID,
-            categoryID: resolvedCategoryID,
+            categoryID: categoryID,
             portion: portion,
             amountValue: amountValue,
             amountUnitID: amountUnitID,
@@ -672,88 +625,7 @@ final class AppStore: ObservableObject {
         )
     }
 
-    private func resolvedPortionForLogging(
-        categoryID: UUID,
-        portion: Core.Portion,
-        amountValue: Double?,
-        amountUnitID: UUID?
-    ) -> Core.Portion {
-        guard let category = categories.first(where: { $0.id == categoryID }),
-              DrinkRules.isDrinkCategory(category),
-              let amountValue,
-              amountValue.isFinite,
-              amountValue >= 0 else {
-            return portion
-        }
-
-        let liters = DrinkRules.liters(from: amountValue, unitID: amountUnitID, units: units)
-        let resolvedLiters: Double
-        if let liters {
-            resolvedLiters = liters
-        } else if amountUnitID == nil {
-            resolvedLiters = amountValue
-        } else {
-            return portion
-        }
-
-        let rounded = DrinkRules.roundedLiters(resolvedLiters)
-        return Core.Portion(rounded, increment: Portion.drinkIncrement)
-    }
-
-    private func logCompositeFood(
-        _ composite: Core.FoodItem,
-        date: Date,
-        mealSlotID: UUID,
-        basePortion: Core.Portion,
-        notes: String?
-    ) async {
-        let resolvedComponents = composite.compositeComponents.compactMap { component -> (Core.FoodItem, Double)? in
-            guard component.portionMultiplier > 0 else { return nil }
-            guard let item = foodItems.first(where: { $0.id == component.foodItemID && !$0.kind.isComposite }) else {
-                return nil
-            }
-            return (item, component.portionMultiplier)
-        }
-        guard !resolvedComponents.isEmpty else { return }
-
-        let groupID = UUID()
-        for (index, component) in resolvedComponents.enumerated() {
-            let scaledPortion = Core.Portion(basePortion.value * component.1)
-            await logPortion(
-                date: date,
-                mealSlotID: mealSlotID,
-                categoryID: component.0.categoryID,
-                portion: scaledPortion,
-                notes: index == 0 ? notes : nil,
-                foodItemID: component.0.id,
-                compositeGroupID: groupID,
-                compositeFoodID: composite.id,
-                compositeFoodName: composite.name
-            )
-        }
-    }
-
-    private func fetchDailyLogForDay(_ day: Date) async -> Core.DailyLog? {
-        guard let db else { return nil }
-        do {
-            return try await db.fetchDailyLog(for: day)
-        } catch {
-            handleOperationError("Log error", error)
-            return nil
-        }
-    }
-
-    private func persistDailyLog(_ log: Core.DailyLog) async {
-        guard let db else { return }
-        do {
-            try await db.saveDailyLog(log)
-            refreshToken = UUID()
-        } catch {
-            handleOperationError("Log error", error)
-        }
-    }
-
-    private static func resolvedMealSlotTimings(
+    static func resolvedMealSlotTimings(
         mealSlots: [Core.MealSlot],
         settings: Core.AppSettings
     ) -> [Core.MealSlotTiming] {
@@ -790,7 +662,7 @@ final class AppStore: ObservableObject {
         return resolved
     }
 
-    private static func defaultMealSlotTimings(
+    static func defaultMealSlotTimings(
         mealSlots: [Core.MealSlot],
         dayCutoffMinutes: Int
     ) -> [Core.MealSlotTiming] {
@@ -856,11 +728,11 @@ final class AppStore: ObservableObject {
         return true
     }
 
-    private static func normalizedCategoryName(_ name: String) -> String {
+    static func normalizedCategoryName(_ name: String) -> String {
         name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    private static func isLegacyCarbCategoryName(_ name: String) -> Bool {
+    static func isLegacyCarbCategoryName(_ name: String) -> Bool {
         let normalized = normalizedCategoryName(name)
         return normalized == "starchy sides" || normalized == "starchy items"
     }

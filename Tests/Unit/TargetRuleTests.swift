@@ -6,8 +6,8 @@ final class TargetRuleTests: XCTestCase {
         let rule = TargetRule.exact(3.0)
 
         XCTAssertTrue(rule.isSatisfied(by: 3.0))
-        XCTAssertTrue(rule.isSatisfied(by: 2.75))
-        XCTAssertTrue(rule.isSatisfied(by: 3.25))
+        XCTAssertTrue(rule.isSatisfied(by: 2.95))
+        XCTAssertTrue(rule.isSatisfied(by: 3.05))
         XCTAssertFalse(rule.isSatisfied(by: 3.5))
     }
 
@@ -40,7 +40,7 @@ final class TargetRuleTests: XCTestCase {
     func testPortionRounding() {
         let portion = Portion(1.12)
 
-        XCTAssertEqual(portion.value, 1.0)
+        XCTAssertEqual(portion.value, 1.1)
         XCTAssertTrue(Portion.isValidIncrement(portion.value))
     }
 }

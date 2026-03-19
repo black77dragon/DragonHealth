@@ -360,14 +360,13 @@ struct NightGuardView: View {
     }
 
     private var phaseCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: ZenSpacing.group) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: ZenSpacing.compact) {
                     Text(currentPhase.title)
-                        .font(.headline)
+                        .zenHeroTitle()
                     Text(currentPhase.message)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .zenSupportText()
                 }
                 Spacer()
                 HStack(spacing: 6) {
@@ -377,68 +376,57 @@ struct NightGuardView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(todayStatus.tint.opacity(0.18), in: Capsule())
+                .background(ZenStyle.elevatedSurface, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(todayStatus.tint.opacity(0.28), lineWidth: 1)
+                )
                 .foregroundStyle(todayStatus.tint)
             }
 
             Text(todayStatus.subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenSupportText()
 
             HStack {
                 Label("Kitchen closes", systemImage: "lock")
                 Spacer()
                 Text(formattedTime(kitchenCloseMinutes))
             }
-            .font(.footnote)
+            .font(.footnote.weight(.medium))
 
             Text(complianceSummary)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.primary)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.indigo.opacity(0.20), Color.orange.opacity(0.10)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        .padding(ZenSpacing.card)
+        .zenCard(cornerRadius: 20)
     }
 
     private var ritualCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: ZenSpacing.group) {
             Text("Closure Ritual (\(formattedTime(ritualStartMinutes)))")
-                .font(.headline)
+                .zenSectionTitle()
             Text("Complete all 3 steps before kitchen close.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenSupportText()
 
             ritualRow(title: "Brush teeth", isDone: $didBrushTeeth)
             ritualRow(title: "Drink tea or water", isDone: $didDrinkWaterOrTea)
             ritualRow(title: "Turn off kitchen lights", isDone: $didTurnOffKitchenLights)
 
             Text("Completed: \(checklistCompletedCount)/3")
-                .font(.caption.weight(.semibold))
+                .font(.footnote.weight(.medium))
                 .foregroundStyle(checklistCompletedCount == 3 ? .green : .secondary)
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .zenCard(cornerRadius: 18)
     }
 
     private var protocolCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: ZenSpacing.group) {
             Text("After \(formattedTime(kitchenCloseMinutes)) Protocol")
-                .font(.headline)
+                .zenSectionTitle()
             Text("Water or tea -> wait 10 minutes -> redirect attention.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenSupportText()
 
             HStack(spacing: 10) {
                 Button {
@@ -481,19 +469,15 @@ struct NightGuardView: View {
             .tint(.orange)
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .zenCard(cornerRadius: 18)
     }
 
     private var reviewCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: ZenSpacing.group) {
             Text("Previous Night Review")
-                .font(.headline)
+                .zenSectionTitle()
             Text("Record success for last night, add a short note, and adjust any previous night.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenSupportText()
 
             DatePicker("Night date", selection: $reviewDate, displayedComponents: .date)
 
@@ -511,7 +495,7 @@ struct NightGuardView: View {
                 .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(.tertiarySystemBackground))
+                        .fill(ZenStyle.surface)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -538,20 +522,18 @@ struct NightGuardView: View {
             if !recentNightRecords.isEmpty {
                 Divider()
                 Text("Recent nights")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .zenMetricLabel()
                 ForEach(Array(recentNightRecords.enumerated()), id: \.offset) { _, record in
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(formattedDate(forDayKey: record.dayKey))
-                                .font(.subheadline.weight(.semibold))
+                                .zenSectionTitle()
                             Text(record.status.title)
-                                .font(.caption)
+                                .font(.footnote.weight(.medium))
                                 .foregroundStyle(record.status.tint)
                             if let note = record.note, !note.isEmpty {
                                 Text(note)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .zenSupportText()
                                     .lineLimit(2)
                             }
                         }
@@ -569,16 +551,13 @@ struct NightGuardView: View {
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .zenCard(cornerRadius: 18)
     }
 
     private var remindersCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: ZenSpacing.group) {
             Text("Reminders")
-                .font(.headline)
+                .zenSectionTitle()
 
             Toggle("Enable Night Guard reminders", isOn: $remindersEnabled)
 
@@ -631,15 +610,11 @@ struct NightGuardView: View {
 
             if let message = reminderManager.scheduleMessage {
                 Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .zenCard(cornerRadius: 18)
     }
 
     private func ritualRow(title: String, isDone: Binding<Bool>) -> some View {

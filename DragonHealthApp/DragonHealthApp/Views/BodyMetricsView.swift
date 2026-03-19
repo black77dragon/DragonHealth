@@ -146,14 +146,7 @@ struct BodyMetricsView: View {
             }
             .padding(20)
         }
-        .background(
-            LinearGradient(
-                colors: [Color(.systemGroupedBackground), Color.blue.opacity(0.04)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-        )
+        .zenPageBackground()
         .navigationTitle("Body")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -287,16 +280,8 @@ private struct CanvasTitle: View {
     let accent: Color
 
     var body: some View {
-        Text(text.uppercased())
-            .font(.caption2.weight(.semibold))
-            .tracking(1.4)
-            .foregroundStyle(
-                LinearGradient(
-                    colors: [accent, accent.opacity(0.65)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
+        Text(text)
+            .zenEyebrow()
     }
 }
 
@@ -313,60 +298,8 @@ private struct CanvasCard<Content: View>: View {
 
     var body: some View {
         content
-            .padding(16)
-            .background(cardBackground)
-            .overlay(cardStroke)
-            .shadow(color: accent.opacity(0.18), radius: 18, x: 0, y: 10)
-    }
-
-    private var cardBackground: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                accent.opacity(0.18),
-                                secondary.opacity(0.08),
-                                Color.clear
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                RoundedRectangle(cornerRadius: size.width * 0.12, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.28),
-                                Color.white.opacity(0.02)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .frame(width: size.width * 0.6, height: size.height * 1.35)
-                    .rotationEffect(.degrees(-18))
-                    .offset(x: size.width * 0.28, y: -size.height * 0.35)
-                    .blendMode(.softLight)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-    }
-
-    private var cardStroke: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [Color.white.opacity(0.55), Color.white.opacity(0.08)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 0.8
-            )
+            .padding(ZenSpacing.card)
+            .zenCard(cornerRadius: 18)
     }
 }
 
@@ -415,14 +348,12 @@ private struct BodyMetricsSurfaceHeader: View {
     let entryCount: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: ZenSpacing.section) {
+            VStack(alignment: .leading, spacing: ZenSpacing.text) {
                 Text("Body dashboard")
-                    .font(.caption.weight(.semibold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.secondary)
+                    .zenEyebrow()
                 Text("Track progress without opening every chart at once.")
-                    .font(.title3.weight(.semibold))
+                    .zenHeroTitle()
                 HStack(spacing: 12) {
                     BodyMetricsHeaderMetric(label: "Latest", value: latestWeight.map { "\($0.cleanNumber) kg" } ?? "--")
                     BodyMetricsHeaderMetric(label: "Target", value: targetWeight.map { "\($0.cleanNumber) kg" } ?? "--")
@@ -430,8 +361,7 @@ private struct BodyMetricsSurfaceHeader: View {
                 }
                 if let latestEntryDate {
                     Text("Last update \(latestEntryDate.formatted(date: .abbreviated, time: .omitted))")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .zenSupportText()
                 }
             }
 
@@ -442,17 +372,8 @@ private struct BodyMetricsSurfaceHeader: View {
             }
             .pickerStyle(.segmented)
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.blue.opacity(0.16), Color.mint.opacity(0.10), Color(.secondarySystemBackground)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        .padding(ZenSpacing.card)
+        .zenCard(cornerRadius: 24)
     }
 }
 
@@ -463,17 +384,13 @@ private struct BodyMetricsHeaderMetric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenMetricLabel()
             Text(value)
-                .font(.headline.monospacedDigit())
+                .zenMetricValue()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.thinMaterial)
-        )
+        .zenCard(cornerRadius: 14)
     }
 }
 
@@ -700,7 +617,7 @@ private struct BodyMetricAveragesCard: View {
 
         VStack(alignment: .leading, spacing: 8) {
             Text("7-Day Averages")
-                .font(.headline)
+                .zenSectionTitle()
             HStack(spacing: 12) {
                 MetricChip(title: "Weight", value: weightDisplay.value, unit: "kg", note: weightDisplay.note)
                 MetricChip(title: "Lean Mass", value: leanMassDisplay.value, unit: "kg", note: leanMassDisplay.note)
@@ -715,15 +632,11 @@ private struct BodyMetricAveragesCard: View {
             }
             if !fallbackTitles.isEmpty {
                 Text("No 7-day average for \(fallbackTitles.joined(separator: ", ")). Showing latest value.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(16)
+        .zenCard(cornerRadius: 18)
     }
 }
 
@@ -736,26 +649,22 @@ private struct AppleHealthSyncCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Apple Health")
-                .font(.headline)
+                .zenSectionTitle()
 
             if let lastSyncDate {
                 Text("Last sync: \(formatted(lastSyncDate))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             } else {
                 Text("No Apple Health sync yet.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             }
 
             if let lastSyncError {
                 Text(lastSyncError)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             } else {
                 Text("Syncs weight, steps, and active energy (Move kcal) from Apple Health (plus any available body measurements).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .zenSupportText()
             }
 
             Button {
@@ -766,11 +675,8 @@ private struct AppleHealthSyncCard: View {
             .glassButton(.text)
             .disabled(isSyncing)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(16)
+        .zenCard(cornerRadius: 18)
     }
 
     private func formatted(_ date: Date) -> String {
@@ -793,7 +699,7 @@ private struct BodyMetricHistorySection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("History")
-                .font(.headline)
+                .zenSectionTitle()
             TimeFramePicker(timeFrame: $timeFrame)
             BodyMetricChartCard(title: "Weight", unit: "kg", points: weightPoints, tint: .blue, clampsToZero: true)
             BodyMetricChartCard(title: "Lean Mass", unit: "kg", points: leanMassPoints, tint: .teal, clampsToZero: true)
@@ -811,8 +717,7 @@ private struct TimeFramePicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Time Frame")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenMetricLabel()
             Picker("Time Frame", selection: $timeFrame) {
                 ForEach(BodyMetricsTimeFrame.allCases) { frame in
                     Text(frame.shortLabel)
@@ -900,10 +805,10 @@ private struct BodyMetricChartCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(title)
-                    .font(.headline)
+                    .zenSectionTitle()
                 Spacer()
                 Text(points.last.map { "\(formattedValue($0.value)) \(unit)" } ?? "--")
-                    .font(.subheadline)
+                    .font(.footnote.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
@@ -927,11 +832,8 @@ private struct BodyMetricChartCard: View {
                 #endif
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(16)
+        .zenCard(cornerRadius: 18)
     }
 
     @ViewBuilder
@@ -1009,22 +911,17 @@ private struct MetricChip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .zenMetricLabel()
             Text(value.map { "\($0.cleanNumber) \(unit)" } ?? "--")
-                .font(.subheadline)
+                .font(.subheadline.monospacedDigit())
             if let note {
                 Text(note)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .zenMetricLabel()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.systemBackground))
-        )
+        .padding(12)
+        .zenCard(cornerRadius: 14)
     }
 }
 
@@ -1060,7 +957,7 @@ private struct BodyMetricRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(entry.date, style: .date)
-                .font(.subheadline)
+                .zenSectionTitle()
             HStack(spacing: 12) {
                 BodyMetricValue(label: "Weight", value: entry.weightKg, unit: "kg")
                 BodyMetricValue(label: "Lean Mass", value: entry.muscleMass, unit: "kg")
@@ -1074,11 +971,8 @@ private struct BodyMetricRow: View {
                 BodyMetricValue(label: "Active Energy", value: entry.activeEnergyKcal, unit: "kcal")
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(16)
+        .zenCard(cornerRadius: 18)
     }
 }
 
@@ -1090,10 +984,9 @@ private struct BodyMetricValue: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .zenMetricLabel()
             Text(value.map { "\($0.cleanNumber) \(unit)" } ?? "--")
-                .font(.caption)
+                .font(.caption.monospacedDigit())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
