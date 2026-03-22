@@ -42,7 +42,7 @@ struct ContentView: View {
             .environmentObject(store)
             .environmentObject(backupManager)
         }
-        .preferredColorScheme(store.settings.appearance.colorScheme)
+        .applyPreferredColorScheme(store.settings.appearance.colorScheme)
         .dynamicTypeSize(store.settings.fontSize.dynamicTypeSize)
     }
 
@@ -600,6 +600,17 @@ private extension Core.AppAppearance {
             return .light
         case .dark:
             return .dark
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func applyPreferredColorScheme(_ colorScheme: ColorScheme?) -> some View {
+        if let colorScheme {
+            preferredColorScheme(colorScheme)
+        } else {
+            self
         }
     }
 }
