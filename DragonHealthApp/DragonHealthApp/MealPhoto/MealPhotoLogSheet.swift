@@ -1,5 +1,4 @@
 import Core
-import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -48,27 +47,32 @@ private struct MealPhotoLibraryEntryContext: Identifiable {
     var id: UUID { draftID }
 }
 
+enum MealPhotoLaunchSource {
+    case camera
+    case library
+}
+
 struct MealPhotoLogSheet: View {
     let categories: [Core.Category]
     let mealSlots: [MealSlot]
     let foodItems: [FoodItem]
     let units: [FoodUnit]
     let preselectedMealSlotID: UUID?
-    let startWithCameraOnAppear: Bool
+    let launchSourceOnAppear: MealPhotoLaunchSource?
     let onSave: (MealSlot, [MealPhotoDraftItem]) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AppStore
     @State private var selectedMealSlotID: UUID?
-    @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
     @State private var draftItems: [MealPhotoDraftItem] = []
     @State private var parseError: String?
     @State private var isAnalyzing = false
     @State private var showingCamera = false
+    @State private var showingPhotoLibrary = false
     @State private var lowConfidenceReviewed = false
     @State private var analysisTask: Task<Void, Never>?
-    @State private var didAutoLaunchCamera = false
+    @State private var didAutoLaunchSource = false
     @State private var libraryOfferContext: MealPhotoLibraryEntryContext?
     @State private var pendingLibraryEntry: MealPhotoLibraryEntryContext?
     @State private var libraryEntryErrorMessage: String?
@@ -77,7 +81,6 @@ struct MealPhotoLogSheet: View {
     @ScaledMetric(relativeTo: .body) private var cardPadding = 16
     @ScaledMetric(relativeTo: .body) private var heroImageHeight = 250
     @ScaledMetric(relativeTo: .body) private var buttonMinHeight = 52
-    @ScaledMetric(relativeTo: .body) private var chipMinWidth = 140
     @ScaledMetric(relativeTo: .body) private var bottomBarHeight = 88
 
     private var availableFoods: [FoodItem] {
@@ -152,16 +155,12 @@ struct MealPhotoLogSheet: View {
         return "Take a photo or choose one from your library. DragonHealth will run AI detection automatically."
     }
 
-    private var summaryColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: chipMinWidth), spacing: 10, alignment: .top)]
-    }
-
     private var takePhotoButtonTitle: String {
         isAwaitingPhotoSelection ? "Take Photo" : "Retake Photo"
     }
 
     private var choosePhotoButtonTitle: String {
-        isAwaitingPhotoSelection ? "Choose Photo" : "Choose Different Photo"
+        isAwaitingPhotoSelection ? "Load Photo" : "Load Different Photo"
     }
 
     var body: some View {
@@ -170,22 +169,16 @@ struct MealPhotoLogSheet: View {
                 VStack(alignment: .leading, spacing: sectionSpacing) {
                     photoActionRow
 
-                    if selectedImage != nil {
-                        photoHeroCard
-                        detectionStatusCard
-                        mealSlotCard
+                    photoHeroCard
 
-                        if hasDetectedItems {
-                            detectedFoodsSummaryCard
+                    if hasDetectedItems {
+                        detectedFoodsSummaryCard
 
-                            if !lowConfidenceItems.isEmpty {
-                                reviewNeededCard
-                            }
-
-                            detectedFoodEditorSection
-                        } else if !isAnalyzing {
-                            emptyDraftCard
+                        if !lowConfidenceItems.isEmpty {
+                            reviewNeededCard
                         }
+
+                        detectedFoodEditorSection
                     }
                 }
                 .padding(.horizontal, 16)
@@ -210,17 +203,23 @@ struct MealPhotoLogSheet: View {
                         selectedMealSlotID = mealSlots.first?.id
                     }
                 }
-                if startWithCameraOnAppear, !didAutoLaunchCamera, selectedImage == nil, hasCamera {
-                    didAutoLaunchCamera = true
-                    showingCamera = true
+                if !didAutoLaunchSource, selectedImage == nil {
+                    didAutoLaunchSource = true
+                    switch launchSourceOnAppear {
+                    case .camera:
+                        if hasCamera {
+                            showingCamera = true
+                        }
+                    case .library:
+                        showingPhotoLibrary = true
+                    case .none:
+                        break
+                    }
                 }
             }
             .onDisappear {
                 analysisTask?.cancel()
                 analysisTask = nil
-            }
-            .task(id: selectedPhotoItem) {
-                await loadSelectedPhoto()
             }
             .sheet(isPresented: $showingCamera) {
                 CameraCaptureView(
@@ -230,6 +229,17 @@ struct MealPhotoLogSheet: View {
                     },
                     onCancel: {
                         showingCamera = false
+                    }
+                )
+            }
+            .sheet(isPresented: $showingPhotoLibrary) {
+                PhotoLibraryPickerView(
+                    onSelect: { image in
+                        prepareForNewPhoto(image)
+                        showingPhotoLibrary = false
+                    },
+                    onCancel: {
+                        showingPhotoLibrary = false
                     }
                 )
             }
@@ -285,12 +295,12 @@ struct MealPhotoLogSheet: View {
     private var photoActionRow: some View {
         HStack(spacing: 12) {
             takePhotoButton
-            choosePhotoButton
+            loadPhotoButton
         }
     }
 
     private var photoHeroCard: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 12) {
             if let selectedImage {
                 Image(uiImage: selectedImage)
                     .resizable()
@@ -298,22 +308,93 @@ struct MealPhotoLogSheet: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: heroImageHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+                    )
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 12) {
+                        statusCopy
+                        Spacer(minLength: 0)
+                        mealTimingMenu
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        statusCopy
+                        mealTimingMenu
+                    }
+                }
+
+                if isAnalyzing {
+                    ProgressView("Running AI food detection...")
+                        .font(.footnote)
+                } else {
+                    Button {
+                        analyzePhoto()
+                    } label: {
+                        Label(hasDetectedItems ? "Run again" : "Retry detection", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(canAnalyze ? Color.accentColor : Color.secondary)
+                    .disabled(!canAnalyze)
+                }
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     Image(systemName: "camera.macro")
                         .font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(Color.accentColor)
-                    Text("Capture your food first")
+                    Text("Capture or load a photo")
                         .font(.body.weight(.semibold))
                     Text("AI starts automatically after a photo is available.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, minHeight: heroImageHeight, alignment: .leading)
-                .padding(cardPadding)
-                .zenCard()
             }
         }
+        .padding(cardPadding)
+        .background(cardBackgroundColor(forError: parseError != nil), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(cardBorderColor(forError: parseError != nil), lineWidth: 1)
+        )
+    }
+
+    private var statusCopy: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(imageStatusTitle)
+                .font(.body.weight(.semibold))
+            Text(imageStatusDetail)
+                .font(.footnote)
+                .foregroundStyle(parseError == nil ? Color.secondary : Color.red)
+        }
+    }
+
+    private var mealTimingMenu: some View {
+        Menu {
+            ForEach(mealSlots) { slot in
+                Button {
+                    selectedMealSlotID = slot.id
+                } label: {
+                    if selectedMealSlotID == slot.id {
+                        Label(slot.name, systemImage: "checkmark")
+                    } else {
+                        Text(slot.name)
+                    }
+                }
+            }
+        } label: {
+            MealPhotoActionButtonLabel(
+                title: "Meal timing: \(selectedMealSlotName)",
+                systemImage: "clock",
+                style: .secondary,
+                minHeight: buttonMinHeight
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var takePhotoButton: some View {
@@ -331,95 +412,39 @@ struct MealPhotoLogSheet: View {
         .disabled(!hasCamera)
     }
 
-    private var choosePhotoButton: some View {
-        PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
+    private var loadPhotoButton: some View {
+        Button {
+            showingPhotoLibrary = true
+        } label: {
             MealPhotoActionButtonLabel(
                 title: choosePhotoButtonTitle,
                 systemImage: "photo.on.rectangle",
-                style: .primary,
+                style: .secondary,
                 minHeight: buttonMinHeight
             )
         }
         .buttonStyle(.plain)
     }
 
-    private var detectionStatusCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: isAnalyzing ? "sparkles.rectangle.stack" : "fork.knife.circle")
-                    .font(.title3)
-                    .foregroundStyle(parseError == nil ? Color.accentColor : Color.red)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(imageStatusTitle)
-                        .font(.body.weight(.semibold))
-                    Text(imageStatusDetail)
-                        .font(.footnote)
-                        .foregroundStyle(parseError == nil ? Color.secondary : Color.red)
-                }
-
-                Spacer(minLength: 0)
-            }
-
-            if isAnalyzing {
-                ProgressView("Running AI food detection...")
-                    .font(.footnote)
-            } else if selectedImage != nil {
-                Button {
-                    analyzePhoto()
-                } label: {
-                    Label(hasDetectedItems ? "Run Again" : "Retry Detection", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(canAnalyze ? Color.accentColor : Color.secondary)
-                .disabled(!canAnalyze)
-            }
-        }
-        .padding(cardPadding)
-        .background(cardBackgroundColor(forError: parseError != nil), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(cardBorderColor(forError: parseError != nil), lineWidth: 1)
-        )
-    }
-
-    private var mealSlotCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Meal")
-                .font(.body.weight(.semibold))
-            Picker("Meal Slot", selection: $selectedMealSlotID) {
-                ForEach(mealSlots) { slot in
-                    Text(slot.name).tag(Optional(slot.id))
-                }
-            }
-            .pickerStyle(.menu)
-            Text("Detected items will be saved into \(selectedMealSlotName).")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .padding(cardPadding)
-        .background(cardBackgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(cardBorderColor(), lineWidth: 1)
-        )
-    }
-
     private var detectedFoodsSummaryCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Detected Foods")
-                .font(.body.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                Text("Detected foods")
+                    .font(.body.weight(.semibold))
+                Spacer()
+                Text("\(draftItems.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
 
-            Text("AI found \(draftItems.count) possible food item\(draftItems.count == 1 ? "" : "s"). Tap any card below to refine the details.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            LazyVGrid(columns: summaryColumns, alignment: .leading, spacing: 10) {
-                ForEach(draftItems) { item in
-                    MealPhotoDetectedSummaryChip(item: item)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(draftItems) { item in
+                        MealPhotoDetectedSummaryChip(item: item)
+                            .frame(width: 150)
+                    }
                 }
+                .padding(.vertical, 2)
             }
         }
         .padding(cardPadding)
@@ -431,21 +456,19 @@ struct MealPhotoLogSheet: View {
     }
 
     private var reviewNeededCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Review Needed")
-                .font(.body.weight(.semibold))
-
-            Text("Some items are low confidence. Confirm those before saving.")
-                .font(.footnote)
-                .foregroundStyle(.orange)
-
-            ForEach(lowConfidenceItems) { item in
-                Text("\(item.foodText): \((item.confidence * 100).rounded().cleanNumber)% confidence (\(MealPhotoConfidenceRAG(confidence: item.confidence).label))")
-                    .font(.caption)
-                    .foregroundStyle(MealPhotoConfidenceRAG(confidence: item.confidence).color)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Low-confidence items")
+                    .font(.body.weight(.semibold))
+                Text("Confirm them before saving.")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
             }
 
-            Toggle("I reviewed low-confidence items", isOn: $lowConfidenceReviewed)
+            Spacer(minLength: 0)
+
+            Toggle("Reviewed", isOn: $lowConfidenceReviewed)
+                .labelsHidden()
         }
         .padding(cardPadding)
         .overlay(alignment: .topLeading) {
@@ -484,22 +507,6 @@ struct MealPhotoLogSheet: View {
                 )
             }
         }
-    }
-
-    private var emptyDraftCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("No detected items yet")
-                .font(.body.weight(.semibold))
-            Text("Choose a photo to let AI identify the foods and prefill the draft for review.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .padding(cardPadding)
-        .background(cardBackgroundColor(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(cardBorderColor(), lineWidth: 1)
-        )
     }
 
     private var saveBar: some View {
@@ -586,7 +593,6 @@ struct MealPhotoLogSheet: View {
         analysisTask = nil
         isAnalyzing = false
         selectedImage = image
-        selectedPhotoItem = nil
         draftItems = []
         parseError = nil
         lowConfidenceReviewed = false
@@ -641,31 +647,6 @@ struct MealPhotoLogSheet: View {
                     isAnalyzing = false
                     parseError = userMessage(for: error)
                 }
-            }
-        }
-    }
-
-    private func loadSelectedPhoto() async {
-        guard let selectedPhotoItem else { return }
-        analysisTask?.cancel()
-        analysisTask = nil
-        await MainActor.run {
-            isAnalyzing = false
-        }
-        do {
-            guard let data = try await selectedPhotoItem.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data) else {
-                await MainActor.run {
-                    parseError = "Unable to load selected image."
-                }
-                return
-            }
-            await MainActor.run {
-                prepareForNewPhoto(image)
-            }
-        } catch {
-            await MainActor.run {
-                parseError = "Photo load failed: \(error.localizedDescription)"
             }
         }
     }
@@ -1235,6 +1216,47 @@ private struct CameraCaptureView: UIViewControllerRepresentable {
         let controller = UIImagePickerController()
         controller.sourceType = .camera
         controller.cameraCaptureMode = .photo
+        controller.allowsEditing = false
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+}
+
+private struct PhotoLibraryPickerView: UIViewControllerRepresentable {
+    let onSelect: (UIImage) -> Void
+    let onCancel: () -> Void
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        private let onSelect: (UIImage) -> Void
+        private let onCancel: () -> Void
+
+        init(onSelect: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onSelect = onSelect
+            self.onCancel = onCancel
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onCancel()
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                onSelect(image)
+            } else {
+                onCancel()
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelect: onSelect, onCancel: onCancel)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let controller = UIImagePickerController()
+        controller.sourceType = .photoLibrary
         controller.allowsEditing = false
         controller.delegate = context.coordinator
         return controller

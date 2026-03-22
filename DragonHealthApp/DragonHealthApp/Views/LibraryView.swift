@@ -308,7 +308,7 @@ private struct LibraryHeroCard: View {
             .pickerStyle(.segmented)
         }
         .padding(ZenSpacing.card)
-        .zenCard(cornerRadius: 24)
+        .zenCard(cornerRadius: 22)
     }
 }
 
@@ -324,8 +324,7 @@ private struct LibraryHeroMetric: View {
                 .zenMetricValue()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .zenCard(cornerRadius: 14)
+        .padding(.vertical, 2)
     }
 }
 

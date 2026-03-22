@@ -3,7 +3,6 @@ import SwiftUI
 private enum DailyHubSection: String, CaseIterable, Identifiable {
     case today
     case history
-    case glp1Review
 
     var id: String { rawValue }
 
@@ -13,8 +12,6 @@ private enum DailyHubSection: String, CaseIterable, Identifiable {
             return "Today"
         case .history:
             return "History"
-        case .glp1Review:
-            return "GLP-1 Review"
         }
     }
 }
@@ -41,8 +38,6 @@ struct DailyHubView: View {
             TodayView()
         case .history:
             HistoryView()
-        case .glp1Review:
-            DrugReviewView()
         }
     }
 

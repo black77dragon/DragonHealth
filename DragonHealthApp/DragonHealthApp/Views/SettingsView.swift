@@ -26,7 +26,7 @@ struct SettingsView: View {
 
             Section("Configuration") {
                 Toggle(
-                    "Show launch screen",
+                    "Show morning reflection",
                     isOn: Binding(
                         get: { store.settings.showLaunchSplash },
                         set: { newValue in
@@ -34,7 +34,7 @@ struct SettingsView: View {
                         }
                     )
                 )
-                Text("Show the logo and version for 2 seconds when the app starts.")
+                Text("Show a short stoic reflection inside Today instead of interrupting launch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

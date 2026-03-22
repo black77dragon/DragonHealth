@@ -15,7 +15,7 @@ final class TodayViewModel: ObservableObject {
     @Published private(set) var currentDay: Date = Date()
     @Published var showingQuickAdd = false
     @Published var showingPhotoLog = false
-    @Published var photoLogStartsWithCamera = false
+    @Published var photoLogLaunchSource: MealPhotoLaunchSource?
     @Published var quickAddPrefillCategoryID: UUID?
     @Published var quickAddPrefillMealSlotID: UUID?
     @Published var editingEntry: DailyLogEntry?
@@ -33,6 +33,10 @@ final class TodayViewModel: ObservableObject {
 
     var canExplainScore: Bool {
         scoreSummary != nil
+    }
+
+    var visibleFoodCategories: [Core.Category] {
+        visibleCategories.filter { !$0.name.lowercased().contains("sport") }
     }
 
     deinit {
@@ -71,14 +75,14 @@ final class TodayViewModel: ObservableObject {
         quickAddPrefillMealSlotID = nil
     }
 
-    func openPhotoLog(startWithCamera: Bool = false) {
-        photoLogStartsWithCamera = startWithCamera
+    func openPhotoLog(launchSource: MealPhotoLaunchSource? = nil) {
+        photoLogLaunchSource = launchSource
         showingPhotoLog = true
     }
 
     func handlePhotoLogPresentationChange(isPresented: Bool) {
         if !isPresented {
-            photoLogStartsWithCamera = false
+            photoLogLaunchSource = nil
         }
     }
 

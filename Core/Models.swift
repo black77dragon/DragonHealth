@@ -379,7 +379,7 @@ public struct AppSettings: Hashable, Sendable {
         doctorName: String? = nil,
         nutritionistName: String? = nil,
         foodSeedVersion: Int = 0,
-        showLaunchSplash: Bool = true,
+        showLaunchSplash: Bool = false,
         appearance: AppAppearance = .system,
         fontSize: AppFontSize = .standard,
         mealSlotTimings: [MealSlotTiming] = []
@@ -399,5 +399,5 @@ public struct AppSettings: Hashable, Sendable {
         self.mealSlotTimings = mealSlotTimings
     }
 
-    public static let defaultValue = AppSettings(dayCutoffMinutes: 4 * 60, showLaunchSplash: true)
+    public static let defaultValue = AppSettings(dayCutoffMinutes: 4 * 60, showLaunchSplash: false)
 }

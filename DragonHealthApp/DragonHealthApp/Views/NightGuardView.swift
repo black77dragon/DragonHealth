@@ -7,26 +7,26 @@ private extension NightGuardStatus {
     var title: String {
         switch self {
         case .pending:
-            return "Pending"
+            return "Awaiting check-in"
         case .compliant:
-            return "Rule Respected"
+            return "Kitchen closed successfully"
         case .violation:
-            return "Rule Broken"
+            return "Late eating logged"
         case .proteinException:
-            return "Protein Exception"
+            return "Recovery snack used"
         }
     }
 
     var subtitle: String {
         switch self {
         case .pending:
-            return "No final status logged for this night yet."
+            return "No final update saved for this night yet."
         case .compliant:
-            return "Kitchen close rule respected."
+            return "You finished the evening without reopening the kitchen."
         case .violation:
-            return "Late-night calories were logged."
+            return "A late eating moment was recorded."
         case .proteinException:
-            return "Strong true hunger handled within protocol."
+            return "A planned protein-based recovery step was used."
         }
     }
 
@@ -65,9 +65,9 @@ private enum NightGuardPhase {
     var title: String {
         switch self {
         case .preCommit:
-            return "Pre-Commitment Window"
+            return "Set up tonight"
         case .closure:
-            return "Closure Ritual Window"
+            return "Close the kitchen"
         case .locked:
             return "Kitchen Closed"
         }
@@ -76,11 +76,11 @@ private enum NightGuardPhase {
     var message: String {
         switch self {
         case .preCommit:
-            return "Food decisions are made in advance. Set up your environment now."
+            return "The easiest moment to protect tonight is before cravings show up."
         case .closure:
-            return "Run your closure ritual now: brush teeth, tea or water, lights off."
+            return "Finish the evening ritual now so the rest of the night feels settled."
         case .locked:
-            return "No calories after close. If craving appears: water, wait 10, then redirect."
+            return "If the pull to eat shows up, slow the moment down and use the recovery plan."
         }
     }
 }
@@ -210,6 +210,81 @@ private final class NightGuardReminderManager: ObservableObject {
     }
 }
 
+private struct NightGuardHeroMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .zenMetricLabel()
+            Text(value)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(ZenStyle.surface)
+        )
+    }
+}
+
+private struct NightGuardDisclosureCard<Content: View>: View {
+    let title: String
+    let subtitle: String
+    @Binding var isExpanded: Bool
+    let content: Content
+
+    init(
+        title: String,
+        subtitle: String,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self._isExpanded = isExpanded
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: isExpanded ? 16 : 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title)
+                            .zenSectionTitle()
+                        Text(subtitle)
+                            .zenSupportText()
+                            .multilineTextAlignment(.leading)
+                    }
+                    Spacer(minLength: 12)
+                    Image(systemName: isExpanded ? "chevron.up.circle.fill" : "chevron.down.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                content
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(16)
+        .zenCard(cornerRadius: 18)
+    }
+}
+
 private extension UNUserNotificationCenter {
     func notificationSettings() async -> UNNotificationSettings {
         await withCheckedContinuation { continuation in
@@ -266,6 +341,8 @@ struct NightGuardView: View {
     @State private var reviewStatus: NightGuardStatus = .pending
     @State private var reviewNote = ""
     @State private var didInitializeReview = false
+    @State private var showingReviewSection = false
+    @State private var showingReminderSettings = false
     @FocusState private var isReviewNoteFocused: Bool
 
     private var ritualStartMinutes: Int {
@@ -303,14 +380,52 @@ struct NightGuardView: View {
             .map { $0 }
     }
 
+    private var reminderSummary: String {
+        guard remindersEnabled else { return "Reminders are off." }
+        return "Ritual \(formattedTime(ritualStartMinutes)), close \(formattedTime(kitchenCloseMinutes)), morning \(formattedTime(morningCheckMinutes))."
+    }
+
+    private var nextStepTitle: String {
+        switch currentPhase {
+        case .preCommit:
+            return "Prepare the evening"
+        case .closure:
+            return "Complete the closeout"
+        case .locked:
+            return "Use the recovery plan"
+        }
+    }
+
+    private var nextStepMessage: String {
+        switch currentPhase {
+        case .preCommit:
+            return "Get the three ritual steps lined up before the kitchen closes at \(formattedTime(kitchenCloseMinutes))."
+        case .closure:
+            return "Finish the three ritual steps now so tonight ends with less friction."
+        case .locked:
+            return "If you feel pulled back into the kitchen, start with tea or water and a short pause."
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                phaseCard
-                ritualCard
-                protocolCard
-                reviewCard
-                remindersCard
+                currentStateHero
+                primaryActionCard
+                NightGuardDisclosureCard(
+                    title: "Review a previous night",
+                    subtitle: "Adjust status, add a short note, or reopen a recent evening.",
+                    isExpanded: $showingReviewSection
+                ) {
+                    reviewSectionContent
+                }
+                NightGuardDisclosureCard(
+                    title: "Reminder timing",
+                    subtitle: reminderSummary,
+                    isExpanded: $showingReminderSettings
+                ) {
+                    remindersSectionContent
+                }
             }
             .padding(20)
         }
@@ -359,9 +474,9 @@ struct NightGuardView: View {
         }
     }
 
-    private var phaseCard: some View {
+    private var currentStateHero: some View {
         VStack(alignment: .leading, spacing: ZenSpacing.group) {
-            HStack(alignment: .top) {
+            HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: ZenSpacing.compact) {
                     Text(currentPhase.title)
                         .zenHeroTitle()
@@ -376,7 +491,7 @@ struct NightGuardView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(ZenStyle.elevatedSurface, in: Capsule())
+                .background(todayStatus.tint.opacity(0.12), in: Capsule())
                 .overlay(
                     Capsule()
                         .stroke(todayStatus.tint.opacity(0.28), lineWidth: 1)
@@ -394,6 +509,11 @@ struct NightGuardView: View {
             }
             .font(.footnote.weight(.medium))
 
+            HStack(alignment: .center, spacing: 12) {
+                NightGuardHeroMetric(label: "Ritual starts", value: formattedTime(ritualStartMinutes))
+                NightGuardHeroMetric(label: "Close", value: formattedTime(kitchenCloseMinutes))
+            }
+
             Text(complianceSummary)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.primary)
@@ -402,83 +522,111 @@ struct NightGuardView: View {
         .zenCard(cornerRadius: 20)
     }
 
-    private var ritualCard: some View {
+    private var primaryActionCard: some View {
         VStack(alignment: .leading, spacing: ZenSpacing.group) {
-            Text("Closure Ritual (\(formattedTime(ritualStartMinutes)))")
+            Text(nextStepTitle)
                 .zenSectionTitle()
-            Text("Complete all 3 steps before kitchen close.")
+            Text(nextStepMessage)
                 .zenSupportText()
 
-            ritualRow(title: "Brush teeth", isDone: $didBrushTeeth)
-            ritualRow(title: "Drink tea or water", isDone: $didDrinkWaterOrTea)
-            ritualRow(title: "Turn off kitchen lights", isDone: $didTurnOffKitchenLights)
-
-            Text("Completed: \(checklistCompletedCount)/3")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(checklistCompletedCount == 3 ? .green : .secondary)
+            switch currentPhase {
+            case .preCommit, .closure:
+                ritualChecklistSection
+            case .locked:
+                recoveryPlanSection
+            }
         }
         .padding(16)
         .zenCard(cornerRadius: 18)
     }
 
-    private var protocolCard: some View {
+    private var ritualChecklistSection: some View {
         VStack(alignment: .leading, spacing: ZenSpacing.group) {
-            Text("After \(formattedTime(kitchenCloseMinutes)) Protocol")
-                .zenSectionTitle()
-            Text("Water or tea -> wait 10 minutes -> redirect attention.")
-                .zenSupportText()
+            ritualRow(title: "Brush teeth", detail: "Create a clear finish line for food.", isDone: $didBrushTeeth)
+            ritualRow(title: "Drink tea or water", detail: "Give yourself a quiet replacement routine.", isDone: $didDrinkWaterOrTea)
+            ritualRow(title: "Turn off kitchen lights", detail: "Make the environment match the plan.", isDone: $didTurnOffKitchenLights)
 
-            HStack(spacing: 10) {
+            HStack {
+                Text("Completed")
+                    .zenMetricLabel()
+                Spacer()
+                Text("\(checklistCompletedCount)/3")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(checklistCompletedCount == 3 ? .green : .primary)
+            }
+        }
+    }
+
+    private var recoveryPlanSection: some View {
+        VStack(alignment: .leading, spacing: ZenSpacing.group) {
+            VStack(alignment: .leading, spacing: 10) {
                 Button {
                     waitUntil = Date().addingTimeInterval(10 * 60)
                 } label: {
-                    Label("Start 10-Min Wait", systemImage: "timer")
+                    Label("Start a 10-minute pause", systemImage: "timer")
+                        .frame(maxWidth: .infinity)
                 }
                 .glassButton(.text)
 
                 if let waitUntil {
-                    Text("Until \(waitUntil.formatted(date: .omitted, time: .shortened))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text("Pause running until \(waitUntil.formatted(date: .omitted, time: .shortened)).")
+                        .zenSupportText()
                 }
             }
 
-            HStack(spacing: 10) {
-                Button {
-                    setStatus(.compliant)
-                } label: {
-                    Label("Mark Rule Respected", systemImage: "checkmark.circle")
-                }
-                .glassButton(.text)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    Button {
+                        setStatus(.compliant)
+                    } label: {
+                        Label("Save as successful close", systemImage: "checkmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .glassButton(.text)
 
-                Button {
-                    setStatus(.violation)
-                } label: {
-                    Label("Log Violation", systemImage: "xmark.circle")
+                    Button {
+                        setStatus(.violation)
+                    } label: {
+                        Label("Log late eating", systemImage: "xmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .glassButton(.text)
+                    .tint(.red)
                 }
-                .glassButton(.text)
-                .tint(.red)
+
+                VStack(spacing: 10) {
+                    Button {
+                        setStatus(.compliant)
+                    } label: {
+                        Label("Save as successful close", systemImage: "checkmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .glassButton(.text)
+
+                    Button {
+                        setStatus(.violation)
+                    } label: {
+                        Label("Log late eating", systemImage: "xmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .glassButton(.text)
+                    .tint(.red)
+                }
             }
 
             Button {
                 setStatus(.proteinException)
             } label: {
-                Label("Log True Hunger (Protein Only)", systemImage: "heart.text.square")
+                Label("Log recovery snack", systemImage: "heart.text.square")
+                    .frame(maxWidth: .infinity)
             }
             .glassButton(.text)
             .tint(.orange)
         }
-        .padding(16)
-        .zenCard(cornerRadius: 18)
     }
 
-    private var reviewCard: some View {
+    private var reviewSectionContent: some View {
         VStack(alignment: .leading, spacing: ZenSpacing.group) {
-            Text("Previous Night Review")
-                .zenSectionTitle()
-            Text("Record success for last night, add a short note, and adjust any previous night.")
-                .zenSupportText()
-
             DatePicker("Night date", selection: $reviewDate, displayedComponents: .date)
 
             Picker("Status", selection: $reviewStatus) {
@@ -550,15 +698,10 @@ struct NightGuardView: View {
                 }
             }
         }
-        .padding(16)
-        .zenCard(cornerRadius: 18)
     }
 
-    private var remindersCard: some View {
+    private var remindersSectionContent: some View {
         VStack(alignment: .leading, spacing: ZenSpacing.group) {
-            Text("Reminders")
-                .zenSectionTitle()
-
             Toggle("Enable Night Guard reminders", isOn: $remindersEnabled)
 
             HStack {
@@ -613,21 +756,25 @@ struct NightGuardView: View {
                     .zenSupportText()
             }
         }
-        .padding(16)
-        .zenCard(cornerRadius: 18)
     }
 
-    private func ritualRow(title: String, isDone: Binding<Bool>) -> some View {
+    private func ritualRow(title: String, detail: String, isDone: Binding<Bool>) -> some View {
         Button {
             isDone.wrappedValue.toggle()
         } label: {
-            HStack(spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
                 Image(systemName: isDone.wrappedValue ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
                     .foregroundStyle(isDone.wrappedValue ? Color.green : Color.secondary)
-                Text(title)
-                    .foregroundStyle(.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .zenSupportText()
+                }
                 Spacer()
             }
+            .padding(.vertical, 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

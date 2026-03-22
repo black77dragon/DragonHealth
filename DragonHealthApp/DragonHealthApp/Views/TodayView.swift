@@ -8,41 +8,90 @@ struct TodayView: View {
     @EnvironmentObject private var store: AppStore
     @StateObject private var viewModel = TodayViewModel()
     @State private var showingScoreExplain = false
-    @AppStorage("today.categoryDisplayStyle") private var categoryDisplayStyleRaw: String = CategoryDisplayStyle.compactRings.rawValue
+    @State private var showingDailyOverview = false
+    @State private var showingMealsAndEntries = false
+    @State private var showingMorningReflection = false
+    @State private var didResolveMorningReflectionForSession = false
     @AppStorage("today.mealDisplayStyle") private var mealDisplayStyleRaw: String = MealDisplayStyle.miniCards.rawValue
     @AppStorage("today.quickAddStyle") private var quickAddStyleRaw: String = QuickAddStyle.standard.rawValue
+    @AppStorage("launchSplash.stoicQuoteIndex") private var stoicQuoteIndex = 0
 
-    private var categoryDisplayStyle: CategoryDisplayStyle {
-        CategoryDisplayStyle(rawValue: categoryDisplayStyleRaw) ?? .compactRings
-    }
     private var mealDisplayStyle: MealDisplayStyle {
         MealDisplayStyle(rawValue: mealDisplayStyleRaw) ?? .miniCards
     }
     private var quickAddStyle: QuickAddStyle {
         QuickAddStyle(rawValue: quickAddStyleRaw) ?? .standard
     }
+
+    private var categoriesNeedingAttentionCount: Int {
+        guard let adherence = viewModel.adherence else { return 0 }
+        return adherence.categoryResults.filter { !$0.targetMet }.count
+    }
+
+    private var dailyOverviewSubtitle: String {
+        if viewModel.visibleFoodCategories.isEmpty {
+            return "Set up food categories to see score and progress."
+        }
+        if let scoreSummary = viewModel.scoreSummary {
+            let roundedScore = Int(scoreSummary.overallScore.rounded())
+            if categoriesNeedingAttentionCount > 0 {
+                let noun = categoriesNeedingAttentionCount == 1 ? "category" : "categories"
+                return "Score \(roundedScore) with \(categoriesNeedingAttentionCount) \(noun) needing attention."
+            }
+            return "Score \(roundedScore) and category progress for today."
+        }
+        return "Track category progress and what needs attention next."
+    }
+
+    private var mealsAndEntriesSubtitle: String {
+        let entryCount = viewModel.mealEntries.count
+        if entryCount == 0 {
+            return "Nothing logged yet. Your meals will collect here after the first entry."
+        }
+        let noun = entryCount == 1 ? "entry" : "entries"
+        return "\(entryCount) \(noun) logged today."
+    }
+
+    private var normalizedQuoteIndex: Int {
+        guard !StoicLaunchQuote.all.isEmpty else { return 0 }
+        let count = StoicLaunchQuote.all.count
+        return ((stoicQuoteIndex % count) + count) % count
+    }
+
+    private var currentReflectionQuote: StoicLaunchQuote? {
+        guard !StoicLaunchQuote.all.isEmpty else { return nil }
+        return StoicLaunchQuote.all[normalizedQuoteIndex]
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 let mealEntries = viewModel.mealEntries
 
-                TodayHeaderView(
-                    adherence: viewModel.adherence,
-                    scoreSummary: viewModel.scoreSummary,
-                    categories: store.categories,
-                    totals: viewModel.totals,
-                    onExplainScore: viewModel.canExplainScore ? { showingScoreExplain = true } : nil
-                )
-
                 TodayPhotoHeroCard(
                     mealSlotName: viewModel.currentMealSlotName,
-                    onTakePhoto: {
-                        viewModel.openPhotoLog()
-                    },
                     onQuickAdd: {
                         viewModel.openQuickAdd()
+                    },
+                    onTakePhoto: {
+                        viewModel.openPhotoLog(launchSource: .camera)
+                    },
+                    onLoadPhoto: {
+                        viewModel.openPhotoLog(launchSource: .library)
                     }
                 )
+
+                if !viewModel.visibleFoodCategories.isEmpty {
+                    FoodCategoryDashboardView(
+                        categories: viewModel.visibleFoodCategories,
+                        totals: viewModel.totals,
+                        scoreSummary: viewModel.scoreSummary,
+                        mealSlots: store.mealSlots,
+                        currentMealSlotID: viewModel.currentMealSlotID
+                    ) { category in
+                        CategoryDayDetailView(category: category)
+                    }
+                }
 
                 if !viewModel.visibleCategories.isEmpty {
                     TodayPriorityStackView(
@@ -73,41 +122,72 @@ struct TodayView: View {
                     )
                 }
 
-                if viewModel.visibleCategories.isEmpty {
-                    Text("No categories configured yet.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    CategoryOverviewGrid(
-                        categories: viewModel.visibleCategories,
-                        totals: viewModel.totals,
-                        style: categoryDisplayStyle
-                    ) { category in
-                        CategoryDayDetailView(category: category)
+                if store.settings.showLaunchSplash,
+                   showingMorningReflection,
+                   let quote = currentReflectionQuote {
+                    MorningReflectionCard(
+                        quote: quote,
+                        onHide: { hideMorningReflection() },
+                        onNext: { advanceMorningReflection() }
+                    )
+                }
+
+                TodaySectionDisclosureCard(
+                    title: "Score & coaching",
+                    subtitle: dailyOverviewSubtitle,
+                    isExpanded: $showingDailyOverview
+                ) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        TodayHeaderView(
+                            adherence: viewModel.adherence,
+                            scoreSummary: viewModel.scoreSummary,
+                            categories: store.categories,
+                            totals: viewModel.totals,
+                            onExplainScore: viewModel.canExplainScore ? { showingScoreExplain = true } : nil
+                        )
+
+                        if viewModel.visibleFoodCategories.isEmpty {
+                            Text("No food categories configured yet.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
-                TodayMealBreakdownView(
-                    mealSlots: store.mealSlots,
-                    entries: mealEntries,
-                    categories: store.categories,
-                    style: mealDisplayStyle
-                )
+                TodaySectionDisclosureCard(
+                    title: "Meals & entries",
+                    subtitle: mealsAndEntriesSubtitle,
+                    isExpanded: $showingMealsAndEntries
+                ) {
+                    if mealEntries.isEmpty {
+                        Text("Your meal timeline, breakdown, and entry details will appear here after your first log.")
+                            .zenSupportText()
+                    } else {
+                        VStack(alignment: .leading, spacing: 16) {
+                            TodayMealBreakdownView(
+                                mealSlots: store.mealSlots,
+                                entries: mealEntries,
+                                categories: store.categories,
+                                style: mealDisplayStyle
+                            )
 
-                TodayMealDetailsSection(
-                    mealSlots: store.mealSlots,
-                    entries: mealEntries,
-                    categories: store.categories,
-                    foodItems: store.foodItems,
-                    onViewDetails: { entry in
-                        viewModel.viewingEntry = entry
-                    },
-                    onEdit: { entry in
-                        viewModel.editingEntry = entry
-                    },
-                    onDelete: { entry in
-                        Task { await viewModel.deleteEntry(store: store, entry) }
+                            TodayMealDetailsSection(
+                                mealSlots: store.mealSlots,
+                                entries: mealEntries,
+                                categories: store.categories,
+                                foodItems: store.foodItems,
+                                onViewDetails: { entry in
+                                    viewModel.viewingEntry = entry
+                                },
+                                onEdit: { entry in
+                                    viewModel.editingEntry = entry
+                                },
+                                onDelete: { entry in
+                                    Task { await viewModel.deleteEntry(store: store, entry) }
+                                }
+                            )
+                        }
                     }
-                )
+                }
             }
             .padding(20)
             .padding(.bottom, 108)
@@ -162,7 +242,7 @@ struct TodayView: View {
                 foodItems: store.foodItems.filter { !$0.kind.isComposite },
                 units: store.units,
                 preselectedMealSlotID: viewModel.currentMealSlotID,
-                startWithCameraOnAppear: viewModel.photoLogStartsWithCamera,
+                launchSourceOnAppear: viewModel.photoLogLaunchSource,
                 onSave: { mealSlot, items in
                     Task { await viewModel.savePhotoLog(store: store, mealSlot: mealSlot, items: items) }
                 }
@@ -207,6 +287,22 @@ struct TodayView: View {
         .task(id: store.refreshToken) {
             await viewModel.loadToday(store: store)
         }
+        .onAppear {
+            if !didResolveMorningReflectionForSession {
+                showingMorningReflection = store.settings.showLaunchSplash
+                didResolveMorningReflectionForSession = true
+            }
+            showingMealsAndEntries = !viewModel.mealEntries.isEmpty
+        }
+        .onChange(of: viewModel.mealEntries.count) { _, newCount in
+            if newCount > 0 {
+                showingMealsAndEntries = true
+            }
+        }
+        .onChange(of: store.settings.showLaunchSplash) { _, newValue in
+            showingMorningReflection = newValue
+            didResolveMorningReflectionForSession = true
+        }
         .overlay(alignment: .top) {
             if let message = viewModel.saveConfirmationMessage {
                 Text(message)
@@ -222,93 +318,243 @@ struct TodayView: View {
             }
         }
     }
-}
 
-private struct TodayPhotoHeroCard: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let mealSlotName: String?
-    let onTakePhoto: () -> Void
-    let onQuickAdd: () -> Void
-
-    private var primaryTitle: String {
-        if let mealSlotName {
-            return "Add from a Photo for \(mealSlotName)"
+    private func hideMorningReflection() {
+        showingMorningReflection = false
+        if !StoicLaunchQuote.all.isEmpty {
+            stoicQuoteIndex = (normalizedQuoteIndex + 1) % StoicLaunchQuote.all.count
         }
-        return "Add from a Photo"
     }
 
-    private var mealContext: String {
-        if let mealSlotName {
-            return "Ready to log \(mealSlotName.lowercased())."
+    private func advanceMorningReflection() {
+        guard !StoicLaunchQuote.all.isEmpty else { return }
+        stoicQuoteIndex = (normalizedQuoteIndex + 1) % StoicLaunchQuote.all.count
+    }
+}
+
+private struct MorningReflectionCard: View {
+    let quote: StoicLaunchQuote
+    let onHide: () -> Void
+    let onNext: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Morning reflection")
+                        .zenEyebrow()
+                    Text("A quiet thought for the day.")
+                        .zenSupportText()
+                }
+                Spacer()
+                Button("Hide for now") {
+                    onHide()
+                }
+                .glassButton(.compact)
+                .font(.caption)
+            }
+
+            Text("\"\(quote.text)\"")
+                .font(.system(.body, design: .serif))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(quote.author)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(quote.relevance)
+                .zenSupportText()
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button("Next thought") {
+                onNext()
+            }
+            .glassButton(.compact)
+            .font(.caption)
         }
-        return "Photo logging is the fastest way to add food."
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .zenCard(cornerRadius: 18)
+    }
+}
+
+private struct TodaySectionDisclosureCard<Content: View>: View {
+    let title: String
+    let subtitle: String
+    @Binding var isExpanded: Bool
+    let content: Content
+
+    init(
+        title: String,
+        subtitle: String,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self._isExpanded = isExpanded
+        self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: ZenSpacing.section) {
-            HStack(alignment: .top, spacing: ZenSpacing.section) {
-                VStack(alignment: .leading, spacing: ZenSpacing.text) {
-                    Text("Photo logging")
-                        .zenEyebrow()
-
-                    Text("Add food from a photo")
-                        .zenHeroTitle()
-
-                    Text("Snap your meal, review the detected foods, and save it into Today in a few taps.")
-                        .zenSupportText()
-                        .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: isExpanded ? 16 : 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
                 }
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        Text(subtitle)
+                            .zenSupportText()
+                            .multilineTextAlignment(.leading)
+                    }
 
-                Spacer(minLength: 0)
+                    Spacer(minLength: 12)
 
-                Image(systemName: "photo.on.rectangle.angled")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .frame(width: 44, height: 44)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(ZenStyle.surface)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                    )
+                    Image(systemName: isExpanded ? "chevron.up.circle.fill" : "chevron.down.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
 
-            Label(mealContext, systemImage: "clock")
+            if isExpanded {
+                content
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .zenCard(cornerRadius: 18)
+    }
+}
+
+private struct TodayPhotoHeroCard: View {
+    let mealSlotName: String?
+    let onQuickAdd: () -> Void
+    let onTakePhoto: () -> Void
+    let onLoadPhoto: () -> Void
+
+    private var cardContext: String {
+        if let mealSlotName {
+            return "Ready to log \(mealSlotName.lowercased())."
+        }
+        return "Choose the fastest way to log food."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Log food")
+                .zenEyebrow()
+
+            Label(cardContext, systemImage: "clock")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            Button(action: onTakePhoto) {
-                HStack(spacing: 8) {
-                    Image(systemName: "photo")
-                    Text(primaryTitle)
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                        .font(.footnote.weight(.bold))
-                }
-                .font(.headline)
-                .foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
-                .frame(maxWidth: .infinity, minHeight: 54)
-                .padding(.horizontal, 16)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(colorScheme == .dark ? Color.white.opacity(0.92) : Color.primary)
+            HStack(alignment: .top, spacing: 10) {
+                TodayLoggingActionButton(
+                    title: "Add manually",
+                    systemImage: "plus",
+                    style: .secondary,
+                    action: onQuickAdd
+                )
+                TodayLoggingActionButton(
+                    title: "Take photo",
+                    systemImage: "camera",
+                    style: .primary,
+                    action: onTakePhoto
+                )
+                TodayLoggingActionButton(
+                    title: "Load photo",
+                    systemImage: "photo.on.rectangle",
+                    style: .secondary,
+                    action: onLoadPhoto
                 )
             }
-            .buttonStyle(.plain)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .accessibilityHint("Opens the meal photo logging flow.")
-
-            Button(action: onQuickAdd) {
-                Label("Add food manually", systemImage: "plus")
-            }
-            .glassButton(.text)
-            .accessibilityHint("Opens the manual add food flow.")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(ZenSpacing.card)
         .zenCard()
+    }
+}
+
+private enum TodayLoggingActionStyle {
+    case primary
+    case secondary
+}
+
+private struct TodayLoggingActionButton: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let title: String
+    let systemImage: String
+    let style: TodayLoggingActionStyle
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.body.weight(.semibold))
+                Text(title)
+                    .font(.footnote.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.9)
+            }
+            .foregroundStyle(foregroundColor)
+            .frame(maxWidth: .infinity, minHeight: 64)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(borderColor, lineWidth: borderLineWidth)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var foregroundColor: Color {
+        switch style {
+        case .primary:
+            return colorScheme == .dark ? .black : .white
+        case .secondary:
+            return .primary
+        }
+    }
+
+    private var background: Color {
+        switch style {
+        case .primary:
+            return colorScheme == .dark ? Color.white.opacity(0.92) : Color.primary
+        case .secondary:
+            return ZenStyle.surface
+        }
+    }
+
+    private var borderColor: Color {
+        switch style {
+        case .primary:
+            return .clear
+        case .secondary:
+            return Color.primary.opacity(0.08)
+        }
+    }
+
+    private var borderLineWidth: CGFloat {
+        switch style {
+        case .primary:
+            return 0
+        case .secondary:
+            return 1
+        }
     }
 }
 
@@ -637,9 +883,6 @@ private struct TodayPriorityStackView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.category.name)
                         .font(.subheadline.weight(.semibold))
-                    Text(item.primaryText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     if let score = item.score {
                         Text("Category score \(Int(score.rounded()))")
                             .font(.caption2)
@@ -652,24 +895,29 @@ private struct TodayPriorityStackView: View {
             }
 
             if item.direction == .under {
-                HStack(spacing: 8) {
-                    ForEach(item.quickAmounts, id: \.self) { amount in
-                        Button("+\(amount.cleanNumber)") {
-                            onQuickAddAmount(item.category.id, amount)
-                        }
-                        .glassButton(.compact)
-                        .font(.caption)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 8) {
+                        Text(item.primaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        priorityActions(for: item)
                     }
-                    Button("Log now") {
-                        onLogNow(item.category.id)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(item.primaryText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        priorityActions(for: item)
                     }
-                    .glassButton(.compact)
-                    .font(.caption)
                 }
             } else {
-                Text("Review this category before adding more today.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.primaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Review this category before adding more today.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(12)
@@ -678,6 +926,24 @@ private struct TodayPriorityStackView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.secondarySystemBackground))
         )
+    }
+
+    @ViewBuilder
+    private func priorityActions(for item: TodayPriorityItem) -> some View {
+        HStack(spacing: 6) {
+            ForEach(item.quickAmounts, id: \.self) { amount in
+                Button("+\(amount.cleanNumber)") {
+                    onQuickAddAmount(item.category.id, amount)
+                }
+                .glassButton(.compact)
+                .font(.caption)
+            }
+            Button("Log") {
+                onLogNow(item.category.id)
+            }
+            .glassButton(.compact)
+            .font(.caption)
+        }
     }
 }
 
@@ -691,37 +957,70 @@ private struct TodayMealTimelineRail: View {
         Dictionary(grouping: entries, by: \.mealSlotID).mapValues(\.count)
     }
 
+    private var showsOverflowHint: Bool {
+        mealSlots.count > 3
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Meal Timeline")
-                .font(.headline)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(mealSlots) { slot in
-                        let count = countsByMealSlotID[slot.id] ?? 0
-                        VStack(spacing: 8) {
-                            NavigationLink {
-                                MealDayDetailView(mealSlot: slot)
-                            } label: {
-                                TodayMealTimelineCell(
-                                    mealSlot: slot,
-                                    loggedCount: count,
-                                    isCurrent: slot.id == currentMealSlotID
-                                )
-                            }
-                            .buttonStyle(.plain)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Meal Timeline")
+                    .font(.headline)
+                Spacer()
+                if showsOverflowHint {
+                    Label("More", systemImage: "arrow.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+            ZStack(alignment: .trailing) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(mealSlots) { slot in
+                            let count = countsByMealSlotID[slot.id] ?? 0
+                            VStack(spacing: 8) {
+                                NavigationLink {
+                                    MealDayDetailView(mealSlot: slot)
+                                } label: {
+                                    TodayMealTimelineCell(
+                                        mealSlot: slot,
+                                        loggedCount: count,
+                                        isCurrent: slot.id == currentMealSlotID
+                                    )
+                                }
+                                .buttonStyle(.plain)
 
-                            Button {
-                                onQuickAddForMeal(slot.id)
-                            } label: {
-                                Image(systemName: "plus")
+                                Button {
+                                    onQuickAddForMeal(slot.id)
+                                } label: {
+                                    Image(systemName: "plus")
+                                }
+                                .glassButton(.compact)
+                                .accessibilityLabel("Add entry for \(slot.name)")
                             }
-                            .glassButton(.compact)
-                            .accessibilityLabel("Add entry for \(slot.name)")
                         }
                     }
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
+                if showsOverflowHint {
+                    LinearGradient(
+                        colors: [
+                            ZenStyle.pageBackground.opacity(0),
+                            ZenStyle.pageBackground
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: 36)
+                    .allowsHitTesting(false)
+                    .overlay(alignment: .trailing) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary.opacity(0.9))
+                            .padding(.trailing, 4)
+                    }
+                }
             }
         }
     }
@@ -894,6 +1193,447 @@ private struct TodayScoreExplainRow: Identifiable {
 private enum TodayPriorityDirection {
     case under
     case over
+}
+
+private struct FoodCategoryDashboardView<Destination: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
+    private let footerHeight: CGFloat = 36
+    let categories: [Core.Category]
+    let totals: [UUID: Double]
+    let scoreSummary: DailyScoreSummary?
+    let mealSlots: [MealSlot]
+    let currentMealSlotID: UUID?
+    let destination: (Core.Category) -> Destination
+
+    private var dashboardScaleMax: Double {
+        let targetMax = categories.map { FoodBarMetric.upperBound(for: $0) }.max() ?? 1
+        let valueMax = categories.map { max(totals[$0.id] ?? 0, 0) }.max() ?? 1
+        return max(targetMax, valueMax) * 1.08
+    }
+
+    private var mealProgress: Double {
+        let orderedMealSlots = mealSlots.sorted { $0.sortOrder < $1.sortOrder }
+        guard !orderedMealSlots.isEmpty else { return 0.5 }
+        guard let currentMealSlotID,
+              let index = orderedMealSlots.firstIndex(where: { $0.id == currentMealSlotID }) else {
+            return 0.5
+        }
+        return min(max(Double(index + 1) / Double(orderedMealSlots.count), 0.12), 1.0)
+    }
+
+    private var metrics: [FoodBarMetric] {
+        categories.map { category in
+            FoodBarMetric.make(
+                category: category,
+                total: totals[category.id] ?? 0,
+                mealProgress: mealProgress
+            )
+        }
+    }
+
+    private var summaryText: String {
+        let safe = metrics.filter { $0.status == .safe }.count
+        let risk = metrics.filter { $0.status == .risk }.count
+        let over = metrics.filter { $0.status == .over }.count
+        let building = max(metrics.count - safe - risk - over, 0)
+
+        var parts: [String] = []
+        if safe > 0 { parts.append("\(safe) SAFE") }
+        if risk > 0 { parts.append("\(risk) RISK") }
+        if over > 0 { parts.append("\(over) OVER") }
+        if building > 0 { parts.append("\(building) BUILD") }
+        return parts.joined(separator: "  ·  ")
+    }
+
+    private var panelGradient: LinearGradient {
+        if colorScheme == .dark {
+            return LinearGradient(
+                colors: [Color.white.opacity(0.08), Color.white.opacity(0.03)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+
+        return LinearGradient(
+            colors: [
+                Color(red: 0.15, green: 0.17, blue: 0.20),
+                Color(red: 0.08, green: 0.09, blue: 0.11)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var roundedOverallScore: Int? {
+        scoreSummary.map { Int($0.overallScore.rounded()) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("FOOD CATEGORIES")
+                        .font(.caption.weight(.bold))
+                        .tracking(1.2)
+                        .foregroundStyle(Color.white.opacity(0.72))
+                    Text(summaryText)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.9))
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 8) {
+                    if let roundedOverallScore {
+                        HStack(spacing: 8) {
+                            Text("SCORE")
+                                .font(.caption2.weight(.bold))
+                                .tracking(0.8)
+                                .foregroundStyle(Color.white.opacity(0.66))
+                            Text("\(roundedOverallScore)")
+                                .font(.title3.weight(.semibold))
+                                .monospacedDigit()
+                                .foregroundStyle(Color.white)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+
+                    Text("BOTTOM-UP")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .foregroundStyle(Color.white.opacity(0.84))
+                }
+            }
+
+            ZStack(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.16))
+                    .frame(height: 1)
+                    .padding(.bottom, footerHeight + 8)
+
+                HStack(alignment: .bottom, spacing: 4) {
+                    ForEach(categories) { category in
+                        let total = totals[category.id] ?? 0
+                        NavigationLink {
+                            destination(category)
+                        } label: {
+                            AthleticFoodBarTile(
+                                metric: FoodBarMetric.make(
+                                    category: category,
+                                    total: total,
+                                    mealProgress: mealProgress
+                                ),
+                                scaleMax: dashboardScaleMax,
+                                footerHeight: footerHeight
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(panelGradient)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.12), lineWidth: 1)
+        )
+    }
+}
+
+private struct AthleticFoodBarTile: View {
+    let metric: FoodBarMetric
+    let scaleMax: Double
+    let footerHeight: CGFloat
+
+    private let chartHeight: CGFloat = 162
+
+    private var targetHeight: CGFloat {
+        let ratio = metric.upperBound / max(scaleMax, 0.1)
+        return max(18, chartHeight * ratio)
+    }
+
+    private var currentHeight: CGFloat {
+        let ratio = max(metric.total, 0) / max(scaleMax, 0.1)
+        return min(chartHeight, chartHeight * ratio)
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            AthleticFoodBarShell(
+                metric: metric,
+                targetHeight: targetHeight,
+                currentHeight: currentHeight
+            )
+            .frame(height: chartHeight, alignment: .bottom)
+
+            VStack(spacing: 2) {
+                Text(metric.shortLabel)
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.97))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+                Text(metric.valueText)
+                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.82))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+            }
+            .frame(height: footerHeight, alignment: .bottom)
+        }
+        .frame(maxWidth: .infinity, maxHeight: chartHeight + footerHeight + 8, alignment: .bottom)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(metric.accessibilityLabel)
+    }
+}
+
+private struct AthleticFoodBarShell: View {
+    let metric: FoodBarMetric
+    let targetHeight: CGFloat
+    let currentHeight: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let innerWidth = max(10, width - 8)
+            let lowerBandHeight = CGFloat(metric.lowerBoundRatio) * targetHeight
+            let safeBandHeight = max(0, CGFloat(metric.safeBandHeightRatio) * targetHeight)
+            let markerPadding = max(2, CGFloat(metric.markerRatio) * targetHeight - 1)
+
+            ZStack(alignment: .bottom) {
+                Color.clear
+
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(red: 0.20, green: 0.22, blue: 0.26))
+                    .frame(height: targetHeight)
+
+                if currentHeight > 0 {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(metric.fillGradient)
+                        .frame(width: innerWidth, height: currentHeight)
+                        .padding(.bottom, 3)
+                        .overlay(alignment: .bottom) {
+                            if metric.status == .risk {
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(Color(red: 0.94, green: 0.73, blue: 0.19), style: StrokeStyle(lineWidth: 1.6, dash: [4, 2]))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 3)
+                            }
+                        }
+                }
+
+                if metric.safeBandHeightRatio > 0 {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(red: 0.33, green: 0.90, blue: 0.47).opacity(0.22))
+                        .frame(width: innerWidth, height: safeBandHeight)
+                        .padding(.bottom, lowerBandHeight + 3)
+                }
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.55))
+                    .frame(height: 1)
+                    .padding(.horizontal, 2)
+                    .padding(.bottom, markerPadding)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(0.26), lineWidth: 1)
+                    .frame(height: targetHeight)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+            )
+        }
+    }
+}
+
+private enum FoodBarStatus: Equatable {
+    case building
+    case safe
+    case risk
+    case over
+}
+
+private struct FoodBarMetric {
+    let category: Core.Category
+    let total: Double
+    let upperBound: Double
+    let lowerBound: Double
+    let fillRatio: Double
+    let overflowRatio: Double
+    let markerRatio: Double
+    let lowerBoundRatio: Double
+    let safeBandHeightRatio: Double
+    let status: FoodBarStatus
+
+    var shortLabel: String {
+        let lower = category.name.lowercased()
+        if lower.contains("drink") { return "DRK" }
+        if lower.contains("vegetable") { return "VEG" }
+        if lower.contains("fruit") { return "FRT" }
+        if lower.contains("carb") || lower.contains("starch") { return "CRB" }
+        if lower.contains("protein") { return "PRT" }
+        if lower.contains("dairy") { return "DAI" }
+        if lower.contains("nut") { return "NUT" }
+        if lower.contains("oil") { return "OIL" }
+        if lower.contains("fat") { return "FAT" }
+        if lower.contains("treat") { return "TRT" }
+        return String(category.name.prefix(3)).uppercased()
+    }
+
+    var valueText: String {
+        "\(total.cleanNumber)/\(targetText)"
+    }
+
+    var targetText: String {
+        switch category.targetRule {
+        case .exact(let target):
+            return target.cleanNumber
+        case .atLeast(let target):
+            return target.cleanNumber
+        case .atMost(let target):
+            return target.cleanNumber
+        case .range(let minValue, let maxValue):
+            return "\(minValue.cleanNumber)-\(maxValue.cleanNumber)"
+        }
+    }
+
+    var statusColor: Color {
+        switch status {
+        case .building:
+            return Color(red: 0.58, green: 0.80, blue: 1.00)
+        case .safe:
+            return Color(red: 0.34, green: 0.89, blue: 0.46)
+        case .risk:
+            return Color(red: 0.99, green: 0.76, blue: 0.24)
+        case .over:
+            return Color(red: 0.98, green: 0.38, blue: 0.31)
+        }
+    }
+
+    var fillGradient: LinearGradient {
+        LinearGradient(
+            colors: [statusColor.opacity(0.95), statusColor.opacity(status == .building ? 0.72 : 0.82)],
+            startPoint: .bottom,
+            endPoint: .top
+        )
+    }
+
+    var accessibilityLabel: String {
+        let statusText: String
+        switch status {
+        case .building:
+            statusText = "building toward target"
+        case .safe:
+            statusText = "safe"
+        case .risk:
+            statusText = "pacing risk"
+        case .over:
+            statusText = "over target"
+        }
+        return "\(category.name), \(total.cleanNumber) \(category.unitName), target \(targetText), \(statusText)"
+    }
+
+    static func upperBound(for category: Core.Category) -> Double {
+        switch category.targetRule {
+        case .exact(let target),
+             .atLeast(let target),
+             .atMost(let target):
+            return max(target, 0.1)
+        case .range(_, let maxValue):
+            return max(maxValue, 0.1)
+        }
+    }
+
+    static func make(category: Core.Category, total: Double, mealProgress: Double) -> FoodBarMetric {
+        let upperBound = upperBound(for: category)
+        let lowerBound: Double
+        let markerRatio: Double
+        let lowerBoundRatio: Double
+        let safeBandHeightRatio: Double
+
+        switch category.targetRule {
+        case .exact(let target):
+            lowerBound = target
+            markerRatio = 0.92
+            lowerBoundRatio = 0
+            safeBandHeightRatio = 0
+        case .atLeast(let target):
+            lowerBound = target
+            markerRatio = 0.92
+            lowerBoundRatio = 0
+            safeBandHeightRatio = 0
+        case .atMost:
+            lowerBound = 0
+            markerRatio = 0.92
+            lowerBoundRatio = 0
+            safeBandHeightRatio = 0
+        case .range(let minValue, let maxValue):
+            lowerBound = minValue
+            markerRatio = 0.92
+            lowerBoundRatio = max(0, minValue / max(maxValue, 0.1))
+            safeBandHeightRatio = max(0, (maxValue - minValue) / max(maxValue, 0.1))
+        }
+
+        let clampedFill = min(max(total, 0), upperBound)
+        let fillRatio = max(0, min(clampedFill / upperBound, 1))
+        let overflowRatio = max(0, min((total - upperBound) / upperBound, 0.35))
+        let consumedShare = max(0, total / upperBound)
+        let riskThreshold = min(0.95, max(mealProgress + 0.24, 0.58))
+
+        let status: FoodBarStatus
+        switch category.targetRule {
+        case .exact(let target):
+            if total > target + TargetRule.exactTolerance {
+                status = .over
+            } else if mealProgress < 0.86 && consumedShare >= riskThreshold {
+                status = .risk
+            } else if abs(total - target) <= TargetRule.exactTolerance {
+                status = .safe
+            } else {
+                status = .building
+            }
+        case .atLeast(let target):
+            status = total >= target ? .safe : .building
+        case .atMost(let target):
+            if total > target + TargetRule.exactTolerance {
+                status = .over
+            } else if total > 0 && mealProgress < 0.86 && consumedShare >= riskThreshold {
+                status = .risk
+            } else if total > 0 {
+                status = .safe
+            } else {
+                status = .building
+            }
+        case .range(let minValue, let maxValue):
+            if total > maxValue + TargetRule.exactTolerance {
+                status = .over
+            } else if total >= minValue && mealProgress < 0.86 && consumedShare >= riskThreshold {
+                status = .risk
+            } else if total >= minValue && total <= maxValue {
+                status = .safe
+            } else {
+                status = .building
+            }
+        }
+
+        return FoodBarMetric(
+            category: category,
+            total: total,
+            upperBound: upperBound,
+            lowerBound: lowerBound,
+            fillRatio: fillRatio,
+            overflowRatio: overflowRatio,
+            markerRatio: markerRatio,
+            lowerBoundRatio: lowerBoundRatio,
+            safeBandHeightRatio: safeBandHeightRatio,
+            status: status
+        )
+    }
 }
 
 private enum TodayTileMetrics {

@@ -12,7 +12,7 @@ struct ManageView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 18) {
                 MoreHeroCard(
                     targetWeightKg: store.settings.targetWeightKg,
                     latestWeightKg: latestWeight,
@@ -23,6 +23,9 @@ struct ManageView: View {
                 MoreSectionCard(title: "Daily support", subtitle: "Frequent actions and routines.") {
                     MoreLinkRow(title: "Night Guard", subtitle: "Evening routine and reminders", systemImage: "moon.stars") {
                         NightGuardView()
+                    }
+                    MoreLinkRow(title: "GLP-1 Review", subtitle: "Medication check-in and weekly reflection", systemImage: "pills") {
+                        DrugReviewView()
                     }
                     MoreLinkRow(title: "Today", subtitle: "Customize the Today screen", systemImage: "sun.max") {
                         TodayViewSettingsView()
@@ -166,11 +169,9 @@ private struct MoreSectionCard<Content: View>: View {
                     .zenSupportText()
             }
             VStack(spacing: 0) {
+                Divider()
                 content
             }
-            .padding(.vertical, 2)
-            .background(Color.clear)
-            .zenCard(cornerRadius: 18)
         }
     }
 }
@@ -215,7 +216,7 @@ private struct MoreLinkRow<Destination: View>: View {
                 Spacer()
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .overlay(alignment: .bottom) {
                 Divider()
@@ -223,22 +224,6 @@ private struct MoreLinkRow<Destination: View>: View {
             }
         }
         .buttonStyle(.plain)
-    }
-}
-
-private enum TodayCategoryDisplayStyleOption: String, CaseIterable, Identifiable {
-    case compactRings
-    case inlineLabel
-    case capsuleRows
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .compactRings: return "Compact rings"
-        case .inlineLabel: return "Inline labels"
-        case .capsuleRows: return "Capsule rows"
-        }
     }
 }
 
@@ -271,16 +256,8 @@ private enum TodayQuickAddStyleOption: String, CaseIterable, Identifiable {
 }
 
 private struct TodayViewSettingsView: View {
-    @AppStorage("today.categoryDisplayStyle") private var categoryDisplayStyleRaw: String = TodayCategoryDisplayStyleOption.compactRings.rawValue
     @AppStorage("today.mealDisplayStyle") private var mealDisplayStyleRaw: String = TodayMealDisplayStyleOption.miniCards.rawValue
     @AppStorage("today.quickAddStyle") private var quickAddStyleRaw: String = TodayQuickAddStyleOption.standard.rawValue
-
-    private var categorySelection: Binding<TodayCategoryDisplayStyleOption> {
-        Binding(
-            get: { TodayCategoryDisplayStyleOption(rawValue: categoryDisplayStyleRaw) ?? .compactRings },
-            set: { categoryDisplayStyleRaw = $0.rawValue }
-        )
-    }
 
     private var mealSelection: Binding<TodayMealDisplayStyleOption> {
         Binding(
@@ -299,12 +276,15 @@ private struct TodayViewSettingsView: View {
     var body: some View {
         Form {
             Section("Categories") {
-                Picker("Category style", selection: categorySelection) {
-                    ForEach(TodayCategoryDisplayStyleOption.allCases) { style in
-                        Text(style.label).tag(style)
-                    }
+                HStack {
+                    Text("Dashboard style")
+                    Spacer()
+                    Text("Athletic bars")
+                        .foregroundStyle(.secondary)
                 }
-                .pickerStyle(.segmented)
+                Text("The Today food dashboard uses bottom-up thermometer bars for the 8 food categories.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Meals") {
@@ -1704,9 +1684,9 @@ struct AboutView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Launch Screen") {
+            Section("Morning Reflection") {
                 Toggle(
-                    "Show launch screen",
+                    "Show morning reflection",
                     isOn: Binding(
                         get: { store.settings.showLaunchSplash },
                         set: { newValue in
@@ -1714,7 +1694,7 @@ struct AboutView: View {
                         }
                     )
                 )
-                Text("Show the logo and version for 2 seconds when the app starts.")
+                Text("Show a short stoic reflection inside Today instead of interrupting launch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

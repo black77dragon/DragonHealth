@@ -91,7 +91,8 @@ struct BodyMetricsView: View {
                     latestEntryDate: latestEntry?.date,
                     latestWeight: latestWeight,
                     targetWeight: store.settings.targetWeightKg,
-                    entryCount: store.bodyMetrics.count
+                    entryCount: store.bodyMetrics.count,
+                    onAddMetric: { showingAdd = true }
                 )
                 switch selectedSurface {
                 case .overview:
@@ -148,18 +149,6 @@ struct BodyMetricsView: View {
         }
         .zenPageBackground()
         .navigationTitle("Body")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showingAdd = true
-                } label: {
-                    Label("Add", systemImage: "plus")
-                        .labelStyle(.iconOnly)
-                        .glassLabel(.icon)
-                }
-                .buttonStyle(.plain)
-            }
-        }
         .sheet(isPresented: $showingAdd) {
             BodyMetricEntrySheet { entry in
                 Task {
@@ -341,20 +330,22 @@ private enum BodyMetricsSurface: String, CaseIterable, Identifiable {
 }
 
 private struct BodyMetricsSurfaceHeader: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var selectedSurface: BodyMetricsSurface
     let latestEntryDate: Date?
     let latestWeight: Double?
     let targetWeight: Double?
     let entryCount: Int
+    let onAddMetric: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: ZenSpacing.section) {
+        VStack(alignment: .leading, spacing: ZenSpacing.group) {
             VStack(alignment: .leading, spacing: ZenSpacing.text) {
-                Text("Body dashboard")
+                Text("Body")
                     .zenEyebrow()
-                Text("Track progress without opening every chart at once.")
+                Text("Log a body check-in, then review trends when you need them.")
                     .zenHeroTitle()
-                HStack(spacing: 12) {
+                HStack(spacing: 8) {
                     BodyMetricsHeaderMetric(label: "Latest", value: latestWeight.map { "\($0.cleanNumber) kg" } ?? "--")
                     BodyMetricsHeaderMetric(label: "Target", value: targetWeight.map { "\($0.cleanNumber) kg" } ?? "--")
                     BodyMetricsHeaderMetric(label: "Entries", value: "\(entryCount)")
@@ -365,6 +356,27 @@ private struct BodyMetricsSurfaceHeader: View {
                 }
             }
 
+            Button {
+                onAddMetric()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus")
+                    Text("Add body update")
+                    Spacer()
+                    Image(systemName: "arrow.right")
+                        .font(.footnote.weight(.bold))
+                }
+                .font(.headline)
+                .foregroundStyle(primaryButtonForeground)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .padding(.horizontal, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(primaryButtonBackground)
+                )
+            }
+            .buttonStyle(.plain)
+
             Picker("Body Surface", selection: $selectedSurface) {
                 ForEach(BodyMetricsSurface.allCases) { surface in
                     Text(surface.label).tag(surface)
@@ -374,6 +386,14 @@ private struct BodyMetricsSurfaceHeader: View {
         }
         .padding(ZenSpacing.card)
         .zenCard(cornerRadius: 24)
+    }
+
+    private var primaryButtonBackground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.92) : Color.primary
+    }
+
+    private var primaryButtonForeground: Color {
+        colorScheme == .dark ? .black : .white
     }
 }
 
@@ -390,7 +410,14 @@ private struct BodyMetricsHeaderMetric: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .zenCard(cornerRadius: 14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(ZenStyle.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
     }
 }
 

@@ -13,28 +13,14 @@ struct ContentView: View {
     @StateObject private var store = AppStore()
     @StateObject private var backupManager = BackupManager()
     @StateObject private var healthSyncManager = HealthSyncManager()
-    @State private var hasResolvedLaunchSplash = false
-    @State private var isSplashVisible = true
     @State private var showingRestoreBackup = false
-    @AppStorage("launchSplash.stoicQuoteIndex") private var stoicQuoteIndex = 0
+    @State private var showingGlobalQuickAdd = false
+    @State private var showingGlobalPhotoLog = false
+    @State private var globalPhotoLogLaunchSource: MealPhotoLaunchSource?
+    @AppStorage("today.quickAddStyle") private var quickAddStyleRaw: String = QuickAddStyle.standard.rawValue
 
     var body: some View {
-        ZStack {
-            if shouldShowLaunchSplash {
-                LaunchSplashView(
-                    quote: currentLaunchQuote,
-                    onDismiss: { dismissLaunchSplash() }
-                )
-            } else {
-                mainContent
-            }
-        }
-        .onAppear {
-            resolveLaunchSplashIfNeeded()
-        }
-        .onChange(of: store.settings.showLaunchSplash) { _, _ in
-            resolveLaunchSplashIfNeeded()
-        }
+        mainContent
         .sheet(isPresented: $showingRestoreBackup) {
             NavigationStack {
                 RestoreBackupView()
@@ -42,22 +28,77 @@ struct ContentView: View {
             .environmentObject(store)
             .environmentObject(backupManager)
         }
+        .sheet(isPresented: $showingGlobalQuickAdd) {
+            QuickAddSheet(
+                categories: store.categories.filter { $0.isEnabled },
+                mealSlots: store.mealSlots,
+                foodItems: store.foodItems,
+                units: store.units,
+                preselectedCategoryID: nil,
+                preselectedMealSlotID: store.currentMealSlotID(),
+                contextDate: nil,
+                style: globalQuickAddStyle,
+                onSave: { mealSlot, category, portion, amountValue, amountUnitID, notes, foodItemID in
+                    Task {
+                        await store.logFoodSelection(
+                            date: Date(),
+                            mealSlotID: mealSlot.id,
+                            categoryID: category.id,
+                            portion: Portion(portion, increment: DrinkRules.portionIncrement(for: category)),
+                            amountValue: amountValue,
+                            amountUnitID: amountUnitID,
+                            notes: notes,
+                            foodItemID: foodItemID
+                        )
+                    }
+                }
+            )
+            .environmentObject(store)
+        }
+        .sheet(isPresented: $showingGlobalPhotoLog, onDismiss: {
+            globalPhotoLogLaunchSource = nil
+        }) {
+            MealPhotoLogSheet(
+                categories: store.categories.filter { $0.isEnabled },
+                mealSlots: store.mealSlots,
+                foodItems: store.foodItems.filter { !$0.kind.isComposite },
+                units: store.units,
+                preselectedMealSlotID: store.currentMealSlotID(),
+                launchSourceOnAppear: globalPhotoLogLaunchSource,
+                onSave: { mealSlot, items in
+                    Task {
+                        let requests = items.compactMap { item -> AppStore.LogPortionRequest? in
+                            guard let categoryID = item.categoryID,
+                                  let portion = item.portion else {
+                                return nil
+                            }
+                            let category = store.categories.first(where: { $0.id == categoryID })
+                            let increment = DrinkRules.portionIncrement(for: category)
+                            let trimmedNotes = item.notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                            let notes = trimmedNotes.isEmpty && item.matchedFoodID == nil ? item.foodText : trimmedNotes
+                            return AppStore.LogPortionRequest(
+                                mealSlotID: mealSlot.id,
+                                categoryID: categoryID,
+                                portion: Portion(portion, increment: increment),
+                                amountValue: item.amountValue,
+                                amountUnitID: item.amountUnitID,
+                                notes: notes.isEmpty ? nil : notes,
+                                foodItemID: item.matchedFoodID
+                            )
+                        }
+                        guard !requests.isEmpty else { return }
+                        await store.logPortions(date: Date(), requests: requests)
+                    }
+                }
+            )
+            .environmentObject(store)
+        }
         .applyPreferredColorScheme(store.settings.appearance.colorScheme)
         .dynamicTypeSize(store.settings.fontSize.dynamicTypeSize)
     }
 
-    private var shouldShowLaunchSplash: Bool {
-        !hasResolvedLaunchSplash && store.settings.showLaunchSplash && isSplashVisible
-    }
-
-    private var currentLaunchQuote: StoicLaunchQuote {
-        StoicLaunchQuote.all[normalizedQuoteIndex]
-    }
-
-    private var normalizedQuoteIndex: Int {
-        guard !StoicLaunchQuote.all.isEmpty else { return 0 }
-        let count = StoicLaunchQuote.all.count
-        return ((stoicQuoteIndex % count) + count) % count
+    private var globalQuickAddStyle: QuickAddStyle {
+        QuickAddStyle(rawValue: quickAddStyleRaw) ?? .standard
     }
 
     private var shouldPerformLaunchHealthSync: Bool {
@@ -73,25 +114,11 @@ struct ContentView: View {
         return true
     }
 
-    private var shouldSkipLaunchSplashForTesting: Bool {
-#if targetEnvironment(simulator)
-        let processInfo = ProcessInfo.processInfo
-        if processInfo.arguments.contains("--skip-launch-splash") {
-            return true
-        }
-        if processInfo.environment["DRAGONHEALTH_SKIP_LAUNCH_SPLASH"] == "1" {
-            return true
-        }
-#endif
-        return false
-    }
-
     @ViewBuilder
     private var mainContent: some View {
         switch store.loadState {
         case .loading:
-            ProgressView("Loading DragonHealth")
-                .accessibilityLabel("Loading DragonHealth")
+            LaunchLoadingView()
         case .failed(let message):
             VStack(spacing: ZenSpacing.card) {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -137,15 +164,13 @@ struct ContentView: View {
             .zenCard(cornerRadius: 24)
         case .ready:
             TabView {
-                NavigationStack { DailyHubView() }
+                rootNavigation { DailyHubView() }
                     .tabItem { Label("Journal", systemImage: "calendar") }
-                NavigationStack { NightGuardView() }
-                    .tabItem { Label("Night Guard", systemImage: "moon.stars") }
-                NavigationStack { BodyMetricsView() }
+                rootNavigation { BodyMetricsView() }
                     .tabItem { Label("Body", systemImage: "waveform.path.ecg") }
-                NavigationStack { LibraryView() }
+                rootNavigation { LibraryView() }
                     .tabItem { Label("Library", systemImage: "book") }
-                NavigationStack { ManageView() }
+                rootNavigation { ManageView() }
                     .tabItem { Label("Manage", systemImage: "slider.horizontal.3") }
             }
             .environmentObject(store)
@@ -182,28 +207,60 @@ struct ContentView: View {
         }
     }
 
-    private func resolveLaunchSplashIfNeeded() {
-        guard !shouldSkipLaunchSplashForTesting else {
-            isSplashVisible = false
-            hasResolvedLaunchSplash = true
-            return
+    private func rootNavigation<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        NavigationStack {
+            content()
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        globalFoodLogMenu
+                    }
+                }
         }
-        guard store.settings.showLaunchSplash else {
-            isSplashVisible = false
-            hasResolvedLaunchSplash = true
-            return
-        }
-        isSplashVisible = true
     }
 
-    private func dismissLaunchSplash() {
-        if !StoicLaunchQuote.all.isEmpty {
-            stoicQuoteIndex = (normalizedQuoteIndex + 1) % StoicLaunchQuote.all.count
+    private var globalFoodLogMenu: some View {
+        Menu {
+            Button("Add Food Manually", systemImage: "plus") {
+                showingGlobalQuickAdd = true
+            }
+            Button("Take Photo", systemImage: "camera") {
+                globalPhotoLogLaunchSource = .camera
+                showingGlobalPhotoLog = true
+            }
+            Button("Load Photo", systemImage: "photo.on.rectangle") {
+                globalPhotoLogLaunchSource = .library
+                showingGlobalPhotoLog = true
+            }
+        } label: {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.body.weight(.semibold))
+                .frame(width: 28, height: 28)
         }
-        withAnimation(.easeInOut(duration: 0.25)) {
-            isSplashVisible = false
-            hasResolvedLaunchSplash = true
+        .accessibilityLabel("Add food")
+    }
+}
+
+private struct LaunchLoadingView: View {
+    var body: some View {
+        VStack(spacing: 18) {
+            ProgressView()
+                .controlSize(.large)
+
+            VStack(spacing: 8) {
+                Text("Opening DragonHealth")
+                    .zenHeroTitle()
+                Text("Preparing your data and loading today so you can start right away.")
+                    .zenSupportText()
+                    .multilineTextAlignment(.center)
+            }
         }
+        .padding(28)
+        .frame(maxWidth: 420)
+        .zenCard(cornerRadius: 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ZenStyle.pageBackground.ignoresSafeArea())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Opening DragonHealth. Preparing your data and loading today.")
     }
 }
 
@@ -228,111 +285,7 @@ private extension Core.AppFontSize {
     )
 }
 
-private struct LaunchSplashView: View {
-    let quote: StoicLaunchQuote
-    let onDismiss: () -> Void
-
-    var body: some View {
-        ZStack {
-            ZenStyle.pageBackground
-                .ignoresSafeArea()
-
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 24) {
-                    VStack(spacing: 14) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                                .fill(ZenStyle.elevatedSurface)
-                            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                                .stroke(Color.black.opacity(0.08), lineWidth: 1)
-                            Image("AppIconBadge")
-                                .resizable()
-                                .scaledToFit()
-                                .padding(18)
-                        }
-                        .frame(width: 180, height: 180)
-
-                        Text("DragonHealth")
-                            .font(.system(.title, design: .serif))
-                            .fontWeight(.semibold)
-
-                        VStack(spacing: 4) {
-                            Text("Author")
-                                .zenEyebrow()
-                            Text("Rene W. Keller")
-                                .font(.footnote)
-                                .fontWeight(.semibold)
-                            Text("Black Dragon Software Inc.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("\"\(quote.text)\"")
-                            .font(.system(.title3, design: .serif))
-                            .foregroundStyle(.primary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity)
-
-                        Text(quote.author)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-
-                        Divider()
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("This is relevant for you because ...")
-                                .zenMetricLabel()
-                            Text(quote.relevance)
-                                .font(.footnote)
-                                .foregroundStyle(.primary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(18)
-                    .zenCard(cornerRadius: 22)
-
-                    VStack(spacing: 12) {
-                        Button("OK") {
-                            onDismiss()
-                        }
-                        .glassButton(.text)
-                        .controlSize(.large)
-                        .tint(Color.accentColor)
-
-                        Text(appVersionText)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 32)
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("DragonHealth by Rene W. Keller. Black Dragon Software Inc. Quote by \(quote.author). \(quote.text). This is relevant for you because \(quote.relevance). \(appVersionText)")
-    }
-
-    private var appVersionText: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-
-        switch (version, build) {
-        case let (version?, build?) where version != build:
-            return "Version \(version) (\(build))"
-        case let (version?, _):
-            return "Version \(version)"
-        case let (_, build?):
-            return "Build \(build)"
-        default:
-            return "Version unavailable"
-        }
-    }
-}
-
-private struct StoicLaunchQuote {
+struct StoicLaunchQuote {
     let text: String
     let author: String
     let relevance: String

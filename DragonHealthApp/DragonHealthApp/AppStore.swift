@@ -236,6 +236,7 @@ final class AppStore: ObservableObject {
 
     func loadAll() async {
         guard let db else { return }
+
         do {
             let snapshot = try await AppBootstrapLoader(
                 db: db,

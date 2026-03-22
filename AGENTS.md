@@ -25,3 +25,9 @@ UX/UI review subagent
 - Use `/Users/renekeller/Projects/Dragonhealth/Docs/agents/ux-ui-reviewer.md` as the source brief for that subagent.
 - Scope the subagent to user-facing flows across the app, not single screens in isolation.
 - Default output should be prioritized findings with concrete file references and recommended UX/UI direction.
+
+Picasso design-implementation agent
+- When the task is to improve or implement DragonHealth's UX/UI, use the `Picasso` agent instead of ad hoc UI edits.
+- Use `/Users/renekeller/Projects/Dragonhealth/Docs/agents/picasso.md` as the source brief.
+- Scope Picasso to user-facing implementation work across flows, surfaces, and shared styling.
+- Default output should be small, reviewable UI changes that move the app toward a calm, zen-like, highly usable experience.
