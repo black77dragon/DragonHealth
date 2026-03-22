@@ -736,6 +736,130 @@ public actor SQLiteDatabase: DBGateway {
         return totalsByDay
     }
 
+    public func upsertDrugReviewEntry(_ entry: Core.DrugReviewDailyEntry) async throws {
+        let dayKey = DayBoundary(cutoffMinutes: 0).dayKey(for: entry.day, calendar: calendar)
+        let sql = """
+        INSERT INTO drug_review_entries (
+            day, id, timestamp, appetite_control, energy_level, side_effects, mood, observation
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(day) DO UPDATE SET
+            id = excluded.id,
+            timestamp = excluded.timestamp,
+            appetite_control = excluded.appetite_control,
+            energy_level = excluded.energy_level,
+            side_effects = excluded.side_effects,
+            mood = excluded.mood,
+            observation = excluded.observation;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, value: dayKey)
+        bindUUID(statement, index: 2, value: entry.id)
+        bindDouble(statement, index: 3, value: entry.timestamp.timeIntervalSince1970)
+        bindInt(statement, index: 4, value: entry.appetiteControl)
+        bindInt(statement, index: 5, value: entry.energyLevel)
+        bindInt(statement, index: 6, value: entry.sideEffects)
+        bindInt(statement, index: 7, value: entry.mood)
+        bindOptionalText(statement, index: 8, value: entry.observation)
+        try step(statement)
+    }
+
+    public func fetchDrugReviewEntry(for date: Date) async throws -> Core.DrugReviewDailyEntry? {
+        let dayKey = DayBoundary(cutoffMinutes: 0).dayKey(for: date, calendar: calendar)
+        let sql = """
+        SELECT day, id, timestamp, appetite_control, energy_level, side_effects, mood, observation
+        FROM drug_review_entries
+        WHERE day = ?
+        LIMIT 1;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, value: dayKey)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return decodeDrugReviewEntry(statement)
+    }
+
+    public func fetchDrugReviewEntries(start: Date, end: Date) async throws -> [Core.DrugReviewDailyEntry] {
+        let startKey = DayBoundary(cutoffMinutes: 0).dayKey(for: min(start, end), calendar: calendar)
+        let endKey = DayBoundary(cutoffMinutes: 0).dayKey(for: max(start, end), calendar: calendar)
+        let sql = """
+        SELECT day, id, timestamp, appetite_control, energy_level, side_effects, mood, observation
+        FROM drug_review_entries
+        WHERE day >= ? AND day <= ?
+        ORDER BY day ASC;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, value: startKey)
+        bindText(statement, index: 2, value: endKey)
+        var entries: [Core.DrugReviewDailyEntry] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            entries.append(decodeDrugReviewEntry(statement))
+        }
+        return entries
+    }
+
+    public func upsertDrugReviewWeeklyReflection(_ reflection: Core.DrugReviewWeeklyReflection) async throws {
+        let weekStartKey = reviewWeekKey(for: reflection.weekStart)
+        let sql = """
+        INSERT INTO drug_review_weekly_reflections (
+            week_start, id, updated_at, what_went_well, what_did_not_work, what_to_adjust
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(week_start) DO UPDATE SET
+            id = excluded.id,
+            updated_at = excluded.updated_at,
+            what_went_well = excluded.what_went_well,
+            what_did_not_work = excluded.what_did_not_work,
+            what_to_adjust = excluded.what_to_adjust;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, value: weekStartKey)
+        bindUUID(statement, index: 2, value: reflection.id)
+        bindDouble(statement, index: 3, value: reflection.updatedAt.timeIntervalSince1970)
+        bindOptionalText(statement, index: 4, value: reflection.whatWentWell)
+        bindOptionalText(statement, index: 5, value: reflection.whatDidNotWork)
+        bindOptionalText(statement, index: 6, value: reflection.whatToAdjust)
+        try step(statement)
+    }
+
+    public func fetchDrugReviewWeeklyReflection(for date: Date) async throws -> Core.DrugReviewWeeklyReflection? {
+        let weekStartKey = reviewWeekKey(for: date)
+        let sql = """
+        SELECT week_start, id, updated_at, what_went_well, what_did_not_work, what_to_adjust
+        FROM drug_review_weekly_reflections
+        WHERE week_start = ?
+        LIMIT 1;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, value: weekStartKey)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return decodeDrugReviewWeeklyReflection(statement)
+    }
+
+    public func fetchDrugReviewWeeklyReflections(start: Date, end: Date) async throws -> [Core.DrugReviewWeeklyReflection] {
+        let startKey = reviewWeekKey(for: min(start, end))
+        let endKey = reviewWeekKey(for: max(start, end))
+        let sql = """
+        SELECT week_start, id, updated_at, what_went_well, what_did_not_work, what_to_adjust
+        FROM drug_review_weekly_reflections
+        WHERE week_start >= ? AND week_start <= ?
+        ORDER BY week_start ASC;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, value: startKey)
+        bindText(statement, index: 2, value: endKey)
+        var reflections: [Core.DrugReviewWeeklyReflection] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            reflections.append(decodeDrugReviewWeeklyReflection(statement))
+        }
+        return reflections
+    }
+
     public func fetchBodyMetrics() async throws -> [Core.BodyMetricEntry] {
         let sql = """
         SELECT day, weight_kg, muscle_mass, body_fat_percent, waist_cm, steps, active_energy_kcal
@@ -951,13 +1075,33 @@ public actor SQLiteDatabase: DBGateway {
             composite_food_name TEXT
         );
         """, db: db)
-        try? execute("ALTER TABLE daily_entries ADD COLUMN food_item_id TEXT;", db: db)
-        try? execute("ALTER TABLE daily_entries ADD COLUMN amount_value REAL;", db: db)
-        try? execute("ALTER TABLE daily_entries ADD COLUMN amount_unit_id TEXT;", db: db)
-        try? execute("ALTER TABLE daily_entries ADD COLUMN composite_group_id TEXT;", db: db)
-        try? execute("ALTER TABLE daily_entries ADD COLUMN composite_food_id TEXT;", db: db)
-        try? execute("ALTER TABLE daily_entries ADD COLUMN composite_food_name TEXT;", db: db)
         try execute("CREATE INDEX IF NOT EXISTS idx_daily_entries_day ON daily_entries(day);", db: db)
+
+        try execute("""
+        CREATE TABLE IF NOT EXISTS drug_review_entries (
+            day TEXT PRIMARY KEY,
+            id TEXT NOT NULL,
+            timestamp REAL NOT NULL,
+            appetite_control INTEGER NOT NULL,
+            energy_level INTEGER NOT NULL,
+            side_effects INTEGER NOT NULL,
+            mood INTEGER NOT NULL,
+            observation TEXT
+        );
+        """, db: db)
+        try execute("CREATE INDEX IF NOT EXISTS idx_drug_review_entries_day ON drug_review_entries(day);", db: db)
+
+        try execute("""
+        CREATE TABLE IF NOT EXISTS drug_review_weekly_reflections (
+            week_start TEXT PRIMARY KEY,
+            id TEXT NOT NULL,
+            updated_at REAL NOT NULL,
+            what_went_well TEXT,
+            what_did_not_work TEXT,
+            what_to_adjust TEXT
+        );
+        """, db: db)
+        try execute("CREATE INDEX IF NOT EXISTS idx_drug_review_weekly_reflections_week_start ON drug_review_weekly_reflections(week_start);", db: db)
 
         try execute("""
         CREATE TABLE IF NOT EXISTS food_items (
@@ -1104,6 +1248,34 @@ public actor SQLiteDatabase: DBGateway {
                 "composite_group_id": "TEXT",
                 "composite_food_id": "TEXT",
                 "composite_food_name": "TEXT"
+            ],
+            db: db
+        )
+
+        try ensureColumns(
+            table: "drug_review_entries",
+            definitions: [
+                "day": "TEXT NOT NULL DEFAULT ''",
+                "id": "TEXT NOT NULL DEFAULT ''",
+                "timestamp": "REAL NOT NULL DEFAULT 0",
+                "appetite_control": "INTEGER NOT NULL DEFAULT 5",
+                "energy_level": "INTEGER NOT NULL DEFAULT 5",
+                "side_effects": "INTEGER NOT NULL DEFAULT 5",
+                "mood": "INTEGER NOT NULL DEFAULT 5",
+                "observation": "TEXT"
+            ],
+            db: db
+        )
+
+        try ensureColumns(
+            table: "drug_review_weekly_reflections",
+            definitions: [
+                "week_start": "TEXT NOT NULL DEFAULT ''",
+                "id": "TEXT NOT NULL DEFAULT ''",
+                "updated_at": "REAL NOT NULL DEFAULT 0",
+                "what_went_well": "TEXT",
+                "what_did_not_work": "TEXT",
+                "what_to_adjust": "TEXT"
             ],
             db: db
         )
@@ -1355,6 +1527,41 @@ public actor SQLiteDatabase: DBGateway {
 
     private func readUUID(_ statement: OpaquePointer, index: Int32) -> UUID {
         UUID(uuidString: readText(statement, index: index)) ?? UUID()
+    }
+
+    private func decodeDrugReviewEntry(_ statement: OpaquePointer) -> Core.DrugReviewDailyEntry {
+        let dayKey = readText(statement, index: 0)
+        let day = DayKeyParser.date(from: dayKey, timeZone: calendar.timeZone) ?? Date()
+        return Core.DrugReviewDailyEntry(
+            id: readUUID(statement, index: 1),
+            day: day,
+            timestamp: Date(timeIntervalSince1970: readDouble(statement, index: 2)),
+            appetiteControl: Int(sqlite3_column_int(statement, 3)),
+            energyLevel: Int(sqlite3_column_int(statement, 4)),
+            sideEffects: Int(sqlite3_column_int(statement, 5)),
+            mood: Int(sqlite3_column_int(statement, 6)),
+            observation: readOptionalText(statement, index: 7)
+        )
+    }
+
+    private func decodeDrugReviewWeeklyReflection(_ statement: OpaquePointer) -> Core.DrugReviewWeeklyReflection {
+        let weekStartKey = readText(statement, index: 0)
+        let weekStart = DayKeyParser.date(from: weekStartKey, timeZone: calendar.timeZone) ?? Date()
+        return Core.DrugReviewWeeklyReflection(
+            id: readUUID(statement, index: 1),
+            weekStart: weekStart,
+            updatedAt: Date(timeIntervalSince1970: readDouble(statement, index: 2)),
+            whatWentWell: readOptionalText(statement, index: 3),
+            whatDidNotWork: readOptionalText(statement, index: 4),
+            whatToAdjust: readOptionalText(statement, index: 5)
+        )
+    }
+
+    private func reviewWeekKey(for date: Date) -> String {
+        let analytics = Core.DrugReviewAnalytics()
+        let weekStart = analytics.weekInterval(containing: date, calendar: calendar)?.start
+            ?? calendar.startOfDay(for: date)
+        return DayBoundary(cutoffMinutes: 0).dayKey(for: weekStart, calendar: calendar)
     }
 
     private func encodeTargetRule(_ rule: Core.TargetRule) -> (type: String, min: Double?, max: Double?) {

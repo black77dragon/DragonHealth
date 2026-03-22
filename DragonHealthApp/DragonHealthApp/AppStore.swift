@@ -87,6 +87,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var compensationRules: [Core.CompensationRule] = []
     @Published private(set) var settings: Core.AppSettings = .defaultValue
     @Published var refreshToken = UUID()
+    @Published private(set) var drugReviewRefreshToken = UUID()
     @Published private(set) var historyInvalidation = HistoryInvalidation()
     @Published private(set) var operationErrorMessage: String?
 
@@ -218,6 +219,10 @@ final class AppStore: ObservableObject {
             reloadCalendarIndicators: true,
             reloadScoreHistory: true
         )
+    }
+
+    private func invalidateDrugReview() {
+        drugReviewRefreshToken = UUID()
     }
 
     private func invalidateHistoryGlobally() {
@@ -531,6 +536,66 @@ final class AppStore: ObservableObject {
         } catch {
             handleOperationError("Log error", error)
             return [:]
+        }
+    }
+
+    func fetchDrugReviewEntry(for date: Date) async -> Core.DrugReviewDailyEntry? {
+        guard let db else { return nil }
+        do {
+            return try await db.fetchDrugReviewEntry(for: date)
+        } catch {
+            handleOperationError("GLP-1 review error", error)
+            return nil
+        }
+    }
+
+    func fetchDrugReviewEntries(start: Date, end: Date) async -> [Core.DrugReviewDailyEntry] {
+        guard let db else { return [] }
+        do {
+            return try await db.fetchDrugReviewEntries(start: start, end: end)
+        } catch {
+            handleOperationError("GLP-1 review error", error)
+            return []
+        }
+    }
+
+    func saveDrugReviewEntry(_ entry: Core.DrugReviewDailyEntry) async {
+        guard let db else { return }
+        do {
+            try await db.upsertDrugReviewEntry(entry)
+            invalidateDrugReview()
+        } catch {
+            handleOperationError("GLP-1 review error", error)
+        }
+    }
+
+    func fetchDrugReviewWeeklyReflection(for date: Date) async -> Core.DrugReviewWeeklyReflection? {
+        guard let db else { return nil }
+        do {
+            return try await db.fetchDrugReviewWeeklyReflection(for: date)
+        } catch {
+            handleOperationError("GLP-1 review error", error)
+            return nil
+        }
+    }
+
+    func fetchDrugReviewWeeklyReflections(start: Date, end: Date) async -> [Core.DrugReviewWeeklyReflection] {
+        guard let db else { return [] }
+        do {
+            return try await db.fetchDrugReviewWeeklyReflections(start: start, end: end)
+        } catch {
+            handleOperationError("GLP-1 review error", error)
+            return []
+        }
+    }
+
+    func saveDrugReviewWeeklyReflection(_ reflection: Core.DrugReviewWeeklyReflection) async {
+        guard let db else { return }
+        do {
+            try await db.upsertDrugReviewWeeklyReflection(reflection)
+            invalidateDrugReview()
+        } catch {
+            handleOperationError("GLP-1 review error", error)
         }
     }
 

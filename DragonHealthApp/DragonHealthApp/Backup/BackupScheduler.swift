@@ -32,7 +32,7 @@ final class BackupScheduler {
                 logger.info("backup_scheduled", metadata: ["earliest": "unknown"])
             }
         } catch {
-            logger.error("backup_schedule_failed", metadata: ["error": error.localizedDescription])
+            logScheduleError(error)
         }
     }
 
@@ -57,5 +57,15 @@ final class BackupScheduler {
             return next
         }
         return date.addingTimeInterval(24 * 60 * 60)
+    }
+
+    private func logScheduleError(_ error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == BGTaskScheduler.errorDomain,
+           nsError.code == BGTaskScheduler.Error.Code.unavailable.rawValue {
+            logger.info("backup_schedule_unavailable", metadata: ["error": error.localizedDescription])
+            return
+        }
+        logger.error("backup_schedule_failed", metadata: ["error": error.localizedDescription])
     }
 }

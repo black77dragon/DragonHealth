@@ -32,7 +32,7 @@ final class HealthSyncScheduler {
                 logger.info("health_sync_scheduled", metadata: ["earliest": "unknown"])
             }
         } catch {
-            logger.error("health_sync_schedule_failed", metadata: ["error": error.localizedDescription])
+            logScheduleError(error)
         }
     }
 
@@ -57,5 +57,15 @@ final class HealthSyncScheduler {
             return next
         }
         return date.addingTimeInterval(24 * 60 * 60)
+    }
+
+    private func logScheduleError(_ error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == BGTaskScheduler.errorDomain,
+           nsError.code == BGTaskScheduler.Error.Code.unavailable.rawValue {
+            logger.info("health_sync_schedule_unavailable", metadata: ["error": error.localizedDescription])
+            return
+        }
+        logger.error("health_sync_schedule_failed", metadata: ["error": error.localizedDescription])
     }
 }

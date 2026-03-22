@@ -23,6 +23,12 @@ public protocol DBGateway: Sendable {
     func saveDailyLog(_ log: Core.DailyLog) async throws
     func fetchDailyLog(for date: Date) async throws -> Core.DailyLog?
     func fetchDailyTotalsByDay(start: Date, end: Date) async throws -> [String: [UUID: Double]]
+    func upsertDrugReviewEntry(_ entry: Core.DrugReviewDailyEntry) async throws
+    func fetchDrugReviewEntry(for date: Date) async throws -> Core.DrugReviewDailyEntry?
+    func fetchDrugReviewEntries(start: Date, end: Date) async throws -> [Core.DrugReviewDailyEntry]
+    func upsertDrugReviewWeeklyReflection(_ reflection: Core.DrugReviewWeeklyReflection) async throws
+    func fetchDrugReviewWeeklyReflection(for date: Date) async throws -> Core.DrugReviewWeeklyReflection?
+    func fetchDrugReviewWeeklyReflections(start: Date, end: Date) async throws -> [Core.DrugReviewWeeklyReflection]
 
     func fetchBodyMetrics() async throws -> [Core.BodyMetricEntry]
     func upsertBodyMetric(_ entry: Core.BodyMetricEntry) async throws
