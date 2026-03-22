@@ -559,13 +559,15 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func saveDrugReviewEntry(_ entry: Core.DrugReviewDailyEntry) async {
-        guard let db else { return }
+    func saveDrugReviewEntry(_ entry: Core.DrugReviewDailyEntry) async -> Bool {
+        guard let db else { return false }
         do {
             try await db.upsertDrugReviewEntry(entry)
             invalidateDrugReview()
+            return true
         } catch {
             handleOperationError("GLP-1 review error", error)
+            return false
         }
     }
 
@@ -589,13 +591,15 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func saveDrugReviewWeeklyReflection(_ reflection: Core.DrugReviewWeeklyReflection) async {
-        guard let db else { return }
+    func saveDrugReviewWeeklyReflection(_ reflection: Core.DrugReviewWeeklyReflection) async -> Bool {
+        guard let db else { return false }
         do {
             try await db.upsertDrugReviewWeeklyReflection(reflection)
             invalidateDrugReview()
+            return true
         } catch {
             handleOperationError("GLP-1 review error", error)
+            return false
         }
     }
 

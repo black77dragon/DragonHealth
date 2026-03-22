@@ -19,20 +19,29 @@ final class DrugReviewViewModel: ObservableObject {
     @Published private(set) var savedReflection: DrugReviewWeeklyReflection?
     @Published private(set) var isSavingDaily = false
     @Published private(set) var isSavingReflection = false
+    @Published private(set) var dailySaveConfirmationMessage: String?
+    @Published private(set) var weeklySaveConfirmationMessage: String?
 
     private let analytics = DrugReviewAnalytics()
+    private var dailySaveConfirmationTask: Task<Void, Never>?
+    private var weeklySaveConfirmationTask: Task<Void, Never>?
 
-    func load(store: AppStore) async {
-        let currentDay = store.currentDay
-        let currentEntry = await store.fetchDrugReviewEntry(for: currentDay)
+    deinit {
+        dailySaveConfirmationTask?.cancel()
+        weeklySaveConfirmationTask?.cancel()
+    }
+
+    func load(store: AppStore, dailyDate: Date, weeklyReferenceDate: Date) async {
+        let currentEntry = await store.fetchDrugReviewEntry(for: dailyDate)
         applyDailyEntry(currentEntry)
 
-        let currentReflection = await store.fetchDrugReviewWeeklyReflection(for: currentDay)
+        let currentReflection = await store.fetchDrugReviewWeeklyReflection(for: weeklyReferenceDate)
         applyWeeklyReflection(currentReflection)
 
-        guard let trendRangeStart = store.appCalendar.date(byAdding: .day, value: -84, to: currentDay) else {
+        guard let selectedWeek = analytics.weekInterval(containing: weeklyReferenceDate, calendar: store.appCalendar),
+              let trendRangeStart = store.appCalendar.date(byAdding: .day, value: -84, to: selectedWeek.start) else {
             weeklySummary = analytics.weeklySummary(
-                referenceDate: currentDay,
+                referenceDate: weeklyReferenceDate,
                 entries: currentEntry.map { [$0] } ?? [],
                 reflection: currentReflection,
                 calendar: store.appCalendar
@@ -41,17 +50,17 @@ final class DrugReviewViewModel: ObservableObject {
             return
         }
 
-        let entries = await store.fetchDrugReviewEntries(start: trendRangeStart, end: currentDay)
-        let reflections = await store.fetchDrugReviewWeeklyReflections(start: trendRangeStart, end: currentDay)
+        let entries = await store.fetchDrugReviewEntries(start: trendRangeStart, end: selectedWeek.end)
+        let reflections = await store.fetchDrugReviewWeeklyReflections(start: trendRangeStart, end: selectedWeek.end)
 
         weeklySummary = analytics.weeklySummary(
-            referenceDate: currentDay,
+            referenceDate: weeklyReferenceDate,
             entries: entries,
             reflection: currentReflection,
             calendar: store.appCalendar
         )
         trendPoints = analytics.weeklyTrendPoints(
-            referenceDate: currentDay,
+            referenceDate: weeklyReferenceDate,
             entries: entries,
             reflections: reflections,
             weeks: 8,
@@ -59,13 +68,13 @@ final class DrugReviewViewModel: ObservableObject {
         )
     }
 
-    func saveDaily(store: AppStore) async {
+    func saveDaily(store: AppStore, day: Date, weeklyReferenceDate: Date) async {
         isSavingDaily = true
         defer { isSavingDaily = false }
 
         let entry = DrugReviewDailyEntry(
-            id: savedEntry?.id ?? UUID(),
-            day: store.currentDay,
+            id: existingEntryID(for: day, calendar: store.appCalendar) ?? UUID(),
+            day: day,
             timestamp: Date(),
             appetiteControl: appetiteControl,
             energyLevel: energyLevel,
@@ -73,28 +82,32 @@ final class DrugReviewViewModel: ObservableObject {
             mood: mood,
             observation: observation
         )
-        await store.saveDrugReviewEntry(entry)
-        await load(store: store)
+        let didSave = await store.saveDrugReviewEntry(entry)
+        guard didSave else { return }
+        await load(store: store, dailyDate: day, weeklyReferenceDate: weeklyReferenceDate)
+        showDailySaveConfirmation("Daily check-in saved")
     }
 
-    func saveWeeklyReflection(store: AppStore) async {
+    func saveWeeklyReflection(store: AppStore, dailyDate: Date, referenceDate: Date) async {
         isSavingReflection = true
         defer { isSavingReflection = false }
 
-        guard let interval = analytics.weekInterval(containing: store.currentDay, calendar: store.appCalendar) else {
+        guard let interval = analytics.weekInterval(containing: referenceDate, calendar: store.appCalendar) else {
             return
         }
 
         let reflection = DrugReviewWeeklyReflection(
-            id: savedReflection?.id ?? UUID(),
+            id: existingReflectionID(for: interval.start, calendar: store.appCalendar) ?? UUID(),
             weekStart: interval.start,
             updatedAt: Date(),
             whatWentWell: whatWentWell,
             whatDidNotWork: whatDidNotWork,
             whatToAdjust: whatToAdjust
         )
-        await store.saveDrugReviewWeeklyReflection(reflection)
-        await load(store: store)
+        let didSave = await store.saveDrugReviewWeeklyReflection(reflection)
+        guard didSave else { return }
+        await load(store: store, dailyDate: dailyDate, weeklyReferenceDate: referenceDate)
+        showWeeklySaveConfirmation("Weekly reflection saved")
     }
 
     private func applyDailyEntry(_ entry: DrugReviewDailyEntry?) {
@@ -111,5 +124,44 @@ final class DrugReviewViewModel: ObservableObject {
         whatWentWell = reflection?.whatWentWell ?? ""
         whatDidNotWork = reflection?.whatDidNotWork ?? ""
         whatToAdjust = reflection?.whatToAdjust ?? ""
+    }
+
+    private func existingEntryID(for day: Date, calendar: Calendar) -> UUID? {
+        guard let savedEntry,
+              calendar.isDate(savedEntry.day, inSameDayAs: day) else {
+            return nil
+        }
+        return savedEntry.id
+    }
+
+    private func existingReflectionID(for weekStart: Date, calendar: Calendar) -> UUID? {
+        guard let savedReflection,
+              calendar.isDate(savedReflection.weekStart, inSameDayAs: weekStart) else {
+            return nil
+        }
+        return savedReflection.id
+    }
+
+    private func showDailySaveConfirmation(_ message: String) {
+        dailySaveConfirmationMessage = message
+        dailySaveConfirmationTask?.cancel()
+        dailySaveConfirmationTask = makeConfirmationTask {
+            self.dailySaveConfirmationMessage = nil
+        }
+    }
+
+    private func showWeeklySaveConfirmation(_ message: String) {
+        weeklySaveConfirmationMessage = message
+        weeklySaveConfirmationTask?.cancel()
+        weeklySaveConfirmationTask = makeConfirmationTask {
+            self.weeklySaveConfirmationMessage = nil
+        }
+    }
+
+    private func makeConfirmationTask(onComplete: @escaping @MainActor () -> Void) -> Task<Void, Never> {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            onComplete()
+        }
     }
 }

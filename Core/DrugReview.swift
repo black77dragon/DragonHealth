@@ -92,7 +92,7 @@ public struct DrugReviewDailyEntry: Identifiable, Hashable, Sendable {
     }
 
     private static func clamp(_ value: Int) -> Int {
-        min(max(value, 1), 10)
+        min(max(value, 0), 10)
     }
 
     private static func normalizedText(_ value: String?) -> String? {

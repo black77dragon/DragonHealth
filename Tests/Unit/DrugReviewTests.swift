@@ -101,6 +101,49 @@ final class DrugReviewTests: XCTestCase {
         XCTAssertEqual(storedReflection.whatToAdjust, "Prep protein in advance.")
     }
 
+    func testDailyEntrySupportsZeroAndTenBoundaryValues() {
+        let day = makeCalendar().date(from: DateComponents(year: 2026, month: 3, day: 22))!
+
+        let entry = DrugReviewDailyEntry(
+            day: day,
+            appetiteControl: 0,
+            energyLevel: 10,
+            sideEffects: 0,
+            mood: 10,
+            observation: "Boundary values"
+        )
+
+        XCTAssertEqual(entry.appetiteControl, 0)
+        XCTAssertEqual(entry.energyLevel, 10)
+        XCTAssertEqual(entry.sideEffects, 0)
+        XCTAssertEqual(entry.mood, 10)
+    }
+
+    func testSQLitePersistsZeroAndTenBoundaryValues() async throws {
+        let db = try makeDatabase()
+        let calendar = makeCalendar()
+        let day = calendar.date(from: DateComponents(year: 2026, month: 3, day: 23))!
+
+        let entry = DrugReviewDailyEntry(
+            day: day,
+            timestamp: calendar.date(bySettingHour: 7, minute: 45, second: 0, of: day) ?? day,
+            appetiteControl: 0,
+            energyLevel: 10,
+            sideEffects: 0,
+            mood: 10,
+            observation: "Zero and ten"
+        )
+
+        try await db.upsertDrugReviewEntry(entry)
+
+        let fetchedEntry = try await db.fetchDrugReviewEntry(for: day)
+        let storedEntry = try XCTUnwrap(fetchedEntry)
+        XCTAssertEqual(storedEntry.appetiteControl, 0)
+        XCTAssertEqual(storedEntry.energyLevel, 10)
+        XCTAssertEqual(storedEntry.sideEffects, 0)
+        XCTAssertEqual(storedEntry.mood, 10)
+    }
+
     private func makeDatabase() throws -> SQLiteDatabase {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("dragonhealth-drug-review-\(UUID().uuidString)")

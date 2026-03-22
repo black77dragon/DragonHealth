@@ -1,5 +1,8 @@
 import SwiftUI
 import Core
+#if canImport(UIKit)
+import UIKit
+#endif
 #if canImport(Charts)
 import Charts
 #endif
@@ -8,14 +11,70 @@ struct DrugReviewView: View {
     @EnvironmentObject private var store: AppStore
     @StateObject private var viewModel = DrugReviewViewModel()
     @State private var showingWeekOverview = false
+    @State private var selectedDailyDate: Date?
+    @State private var selectedWeeklyReferenceDate: Date?
+
+    private let analytics = DrugReviewAnalytics()
 
     private var currentWeekRangeText: String {
-        guard let summary = viewModel.weeklySummary else { return "This week" }
-        return weekRangeText(start: summary.weekStart, end: summary.weekEnd)
+        if let summary = viewModel.weeklySummary {
+            return weekRangeText(start: summary.weekStart, end: summary.weekEnd)
+        }
+        guard let interval = analytics.weekInterval(containing: weeklyReferenceDate, calendar: store.appCalendar) else {
+            return "This week"
+        }
+        return weekRangeText(start: interval.start, end: interval.end)
     }
 
     private var isSunday: Bool {
         store.appCalendar.component(.weekday, from: store.currentDay) == 1
+    }
+
+    private var defaultDailyReviewDate: Date {
+        store.appCalendar.date(byAdding: .day, value: -1, to: store.currentDay) ?? store.currentDay
+    }
+
+    private var dailyReviewDate: Date {
+        store.appCalendar.startOfDay(for: selectedDailyDate ?? defaultDailyReviewDate)
+    }
+
+    private var weeklyReferenceDate: Date {
+        store.appCalendar.startOfDay(for: selectedWeeklyReferenceDate ?? store.currentDay)
+    }
+
+    private var isDefaultDailyReviewDate: Bool {
+        store.appCalendar.isDate(dailyReviewDate, inSameDayAs: defaultDailyReviewDate)
+    }
+
+    private var dailyReviewDayText: String {
+        let formatter = DateFormatter()
+        formatter.calendar = store.appCalendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = store.appCalendar.timeZone
+        formatter.dateFormat = "EEE d.M.yy"
+        return formatter.string(from: dailyReviewDate)
+    }
+
+    private var dailyReviewDateBinding: Binding<Date> {
+        Binding(
+            get: { dailyReviewDate },
+            set: { selectedDailyDate = store.appCalendar.startOfDay(for: $0) }
+        )
+    }
+
+    private var weeklyReferenceDateBinding: Binding<Date> {
+        Binding(
+            get: { weeklyReferenceDate },
+            set: { selectedWeeklyReferenceDate = store.appCalendar.startOfDay(for: $0) }
+        )
+    }
+
+    private var loadKey: DrugReviewLoadKey {
+        DrugReviewLoadKey(
+            refreshToken: store.drugReviewRefreshToken,
+            dailyDate: dailyReviewDate,
+            weeklyReferenceDate: weeklyReferenceDate
+        )
     }
 
     var body: some View {
@@ -23,8 +82,10 @@ struct DrugReviewView: View {
             VStack(alignment: .leading, spacing: ZenSpacing.section) {
                 DrugReviewHeaderCard(
                     weekRangeText: currentWeekRangeText,
+                    dailyReviewDayText: dailyReviewDayText,
                     savedEntry: viewModel.savedEntry,
-                    isSunday: isSunday
+                    isSunday: isSunday,
+                    isDefaultDailyReviewDate: isDefaultDailyReviewDate
                 )
 
                 DrugReviewDailyFormCard(
@@ -33,10 +94,22 @@ struct DrugReviewView: View {
                     sideEffects: $viewModel.sideEffects,
                     mood: $viewModel.mood,
                     observation: $viewModel.observation,
+                    reviewDate: dailyReviewDateBinding,
+                    maximumReviewDate: defaultDailyReviewDate,
+                    reviewDayText: dailyReviewDayText,
+                    isDefaultReviewDate: isDefaultDailyReviewDate,
                     savedTimestamp: viewModel.savedEntry?.timestamp,
+                    saveConfirmationMessage: viewModel.dailySaveConfirmationMessage,
                     isSaving: viewModel.isSavingDaily,
+                    onUsePreviousDay: { selectedDailyDate = nil },
                     onSave: {
-                        Task { await viewModel.saveDaily(store: store) }
+                        Task {
+                            await viewModel.saveDaily(
+                                store: store,
+                                day: dailyReviewDate,
+                                weeklyReferenceDate: weeklyReferenceDate
+                            )
+                        }
                     }
                 )
 
@@ -57,10 +130,21 @@ struct DrugReviewView: View {
                         whatWentWell: $viewModel.whatWentWell,
                         whatDidNotWork: $viewModel.whatDidNotWork,
                         whatToAdjust: $viewModel.whatToAdjust,
+                        referenceDate: weeklyReferenceDateBinding,
+                        maximumReferenceDate: store.currentDay,
+                        weekRangeText: currentWeekRangeText,
                         updatedAt: viewModel.savedReflection?.updatedAt,
+                        saveConfirmationMessage: viewModel.weeklySaveConfirmationMessage,
                         isSaving: viewModel.isSavingReflection,
+                        onUseCurrentWeek: { selectedWeeklyReferenceDate = nil },
                         onSave: {
-                            Task { await viewModel.saveWeeklyReflection(store: store) }
+                            Task {
+                                await viewModel.saveWeeklyReflection(
+                                    store: store,
+                                    dailyDate: dailyReviewDate,
+                                    referenceDate: weeklyReferenceDate
+                                )
+                            }
                         }
                     )
 
@@ -76,8 +160,12 @@ struct DrugReviewView: View {
         .background(ZenStyle.pageBackground)
         .navigationTitle("GLP-1 Review")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: store.drugReviewRefreshToken) {
-            await viewModel.load(store: store)
+        .task(id: loadKey) {
+            await viewModel.load(
+                store: store,
+                dailyDate: dailyReviewDate,
+                weeklyReferenceDate: weeklyReferenceDate
+            )
         }
     }
 
@@ -90,16 +178,27 @@ struct DrugReviewView: View {
     }
 }
 
+private struct DrugReviewLoadKey: Hashable {
+    let refreshToken: UUID
+    let dailyDate: Date
+    let weeklyReferenceDate: Date
+}
+
 private struct DrugReviewHeaderCard: View {
     let weekRangeText: String
+    let dailyReviewDayText: String
     let savedEntry: DrugReviewDailyEntry?
     let isSunday: Bool
+    let isDefaultDailyReviewDate: Bool
 
     private var statusText: String {
         if let savedEntry {
-            return "Saved \(savedEntry.timestamp.formatted(date: .omitted, time: .shortened))."
+            return "Saved for \(dailyReviewDayText) at \(savedEntry.timestamp.formatted(date: .omitted, time: .shortened))."
         }
-        return "Today's check-in takes about a minute."
+        if isDefaultDailyReviewDate {
+            return "Yesterday's check-in takes about a minute."
+        }
+        return "Open any earlier day to review or update it."
     }
 
     var body: some View {
@@ -110,6 +209,9 @@ private struct DrugReviewHeaderCard: View {
                         .zenEyebrow()
                     Text("Fast daily review, simple weekly reflection.")
                         .zenHeroTitle()
+                    Text("Daily check-in for \(dailyReviewDayText)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
                     Text(statusText)
                         .zenSupportText()
                 }
@@ -128,7 +230,7 @@ private struct DrugReviewHeaderCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("1-10 ratings")
+                Text("0-10 ratings")
                     .zenMetricLabel()
             }
         }
@@ -143,14 +245,41 @@ private struct DrugReviewDailyFormCard: View {
     @Binding var sideEffects: Int
     @Binding var mood: Int
     @Binding var observation: String
+    @Binding var reviewDate: Date
+    let maximumReviewDate: Date
+    let reviewDayText: String
+    let isDefaultReviewDate: Bool
     let savedTimestamp: Date?
+    let saveConfirmationMessage: String?
     let isSaving: Bool
+    let onUsePreviousDay: () -> Void
     let onSave: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: ZenSpacing.group) {
-            Text("Today's Entry")
-                .zenSectionTitle()
+            HStack(alignment: .center) {
+                Text("Daily Check-In")
+                    .zenSectionTitle()
+                Spacer()
+                Text(reviewDayText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(isDefaultReviewDate ? "This review is always for the day before." : "Choose any previous day to review or update that entry.")
+                .zenSupportText()
+
+            HStack {
+                DatePicker("Check-in day", selection: $reviewDate, in: ...maximumReviewDate, displayedComponents: .date)
+                    .datePickerStyle(.compact)
+                Spacer()
+                Button {
+                    onUsePreviousDay()
+                } label: {
+                    Label("Use Yesterday", systemImage: "arrow.uturn.backward.circle")
+                }
+                .glassButton(.text)
+            }
 
             DrugReviewScoreRow(
                 criterion: .appetiteControl,
@@ -172,11 +301,16 @@ private struct DrugReviewDailyFormCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Observation")
                     .zenMetricLabel()
-                TextField("Optional note for today", text: $observation, axis: .vertical)
-                    .lineLimit(3...5)
-                    .textInputAutocapitalization(.sentences)
-                    .padding(12)
-                    .background(ZenStyle.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                DrugReviewMultilineInput(
+                    text: $observation,
+                    placeholder: "Optional note for \(reviewDayText)",
+                    minHeight: 112
+                )
+            }
+
+            if let saveConfirmationMessage {
+                DrugReviewSaveConfirmationView(message: saveConfirmationMessage)
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
 
             HStack {
@@ -193,7 +327,7 @@ private struct DrugReviewDailyFormCard: View {
                         ProgressView()
                             .frame(minWidth: 120)
                     } else {
-                        Text("Save Today's Check-In")
+                        Text("Save Daily Check-In")
                             .frame(minWidth: 120)
                     }
                 }
@@ -225,11 +359,11 @@ private struct DrugReviewScoreRow: View {
             }
 
             HStack(spacing: 8) {
-                Text("1")
+                Text("0")
                     .zenMetricLabel()
                     .frame(width: 10, alignment: .leading)
 
-                Slider(value: sliderValue, in: 1...10, step: 1)
+                Slider(value: sliderValue, in: 0...10, step: 1)
 
                 Text("10")
                     .zenMetricLabel()
@@ -323,7 +457,7 @@ private struct DrugReviewWeeklySummaryCard: View {
                     }
                 }
             } else {
-                Text("Start with today's check-in and the weekly summary will build automatically.")
+                Text("Start with a daily check-in and the weekly summary will build automatically.")
                     .zenSupportText()
             }
         }
@@ -353,21 +487,48 @@ private struct DrugReviewWeeklyReflectionCard: View {
     @Binding var whatWentWell: String
     @Binding var whatDidNotWork: String
     @Binding var whatToAdjust: String
+    @Binding var referenceDate: Date
+    let maximumReferenceDate: Date
+    let weekRangeText: String
     let updatedAt: Date?
+    let saveConfirmationMessage: String?
     let isSaving: Bool
+    let onUseCurrentWeek: () -> Void
     let onSave: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: ZenSpacing.group) {
-            Text(isSunday ? "Sunday Reflection" : "Weekly Reflection")
-                .zenSectionTitle()
+            HStack(alignment: .center) {
+                Text(isSunday ? "Sunday Reflection" : "Weekly Reflection")
+                    .zenSectionTitle()
+                Spacer()
+                Text(weekRangeText)
+                    .zenMetricLabel()
+            }
 
-            Text(isSunday ? "Capture what worked, what didn't, and what to adjust for next week." : "You can fill this in any day, then revisit it on Sunday.")
+            Text(isSunday ? "Capture what worked, what didn't, and what to adjust for next week." : "Pick any date in the week you want to review or update.")
                 .zenSupportText()
+
+            HStack {
+                DatePicker("Week date", selection: $referenceDate, in: ...maximumReferenceDate, displayedComponents: .date)
+                    .datePickerStyle(.compact)
+                Spacer()
+                Button {
+                    onUseCurrentWeek()
+                } label: {
+                    Label("Use This Week", systemImage: "arrow.uturn.backward.circle")
+                }
+                .glassButton(.text)
+            }
 
             DrugReviewReflectionField(title: "What went well", text: $whatWentWell)
             DrugReviewReflectionField(title: "What didn't work", text: $whatDidNotWork)
             DrugReviewReflectionField(title: "What to adjust", text: $whatToAdjust)
+
+            if let saveConfirmationMessage {
+                DrugReviewSaveConfirmationView(message: saveConfirmationMessage)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
 
             HStack {
                 if let updatedAt {
@@ -404,14 +565,127 @@ private struct DrugReviewReflectionField: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .zenMetricLabel()
-            TextField(title, text: $text, axis: .vertical)
-                .lineLimit(2...4)
-                .textInputAutocapitalization(.sentences)
-                .padding(12)
-                .background(ZenStyle.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            DrugReviewMultilineInput(
+                text: $text,
+                placeholder: title,
+                minHeight: 92
+            )
         }
     }
 }
+
+private struct DrugReviewSaveConfirmationView: View {
+    let message: String
+
+    var body: some View {
+        Label(message, systemImage: "checkmark.circle.fill")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Color.green)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.green.opacity(0.12), in: Capsule())
+    }
+}
+
+private struct DrugReviewMultilineInput: View {
+    @Binding var text: String
+    let placeholder: String
+    let minHeight: CGFloat
+
+    private var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            DrugReviewScrollableTextEditor(text: $text)
+                .frame(height: minHeight)
+
+            if isEmpty {
+                Text(placeholder)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 14)
+                    .allowsHitTesting(false)
+            }
+        }
+        .background(ZenStyle.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+#if canImport(UIKit)
+private struct DrugReviewScrollableTextEditor: UIViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.isScrollEnabled = true
+        textView.showsVerticalScrollIndicator = true
+        textView.alwaysBounceVertical = true
+        textView.keyboardDismissMode = .interactive
+        textView.autocapitalizationType = .sentences
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 18)
+        textView.textContainer.lineFragmentPadding = 0
+        return textView
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        if uiView.text != text {
+            uiView.text = text
+        }
+
+        DispatchQueue.main.async {
+            let isOverflowing = uiView.contentSize.height > uiView.bounds.height + 1
+            if isOverflowing && !context.coordinator.isOverflowing {
+                uiView.flashScrollIndicators()
+            }
+            context.coordinator.isOverflowing = isOverflowing
+        }
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        @Binding var text: String
+        var isOverflowing = false
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            text = textView.text
+
+            let isOverflowing = textView.contentSize.height > textView.bounds.height + 1
+            if isOverflowing && !self.isOverflowing {
+                textView.flashScrollIndicators()
+            }
+            self.isOverflowing = isOverflowing
+        }
+    }
+}
+#else
+private struct DrugReviewScrollableTextEditor: View {
+    @Binding var text: String
+
+    var body: some View {
+        TextEditor(text: $text)
+            .scrollContentBackground(.hidden)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+    }
+}
+#endif
 
 private struct DrugReviewTrendsCard: View {
     @Binding var selectedCriterion: DrugReviewCriterion
@@ -503,7 +777,7 @@ private struct DrugReviewTrendChart: View {
             .chartYAxis {
                 AxisMarks(position: .leading)
             }
-            .chartYScale(domain: 1...10)
+            .chartYScale(domain: 0...10)
             .frame(height: 170)
         } else {
             Text("Charts require iOS 16 or later.")
