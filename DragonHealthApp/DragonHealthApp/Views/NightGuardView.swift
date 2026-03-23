@@ -343,6 +343,8 @@ struct NightGuardView: View {
     @State private var didInitializeReview = false
     @State private var showingReviewSection = false
     @State private var showingReminderSettings = false
+    @State private var reviewSaveMessage: String?
+    @State private var reviewSaveDismissTask: Task<Void, Never>?
     @FocusState private var isReviewNoteFocused: Bool
 
     private var ritualStartMinutes: Int {
@@ -667,6 +669,13 @@ struct NightGuardView: View {
                 .glassButton(.text)
             }
 
+            if let reviewSaveMessage {
+                Label(reviewSaveMessage, systemImage: "checkmark.circle.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.green)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
             if !recentNightRecords.isEmpty {
                 Divider()
                 Text("Recent nights")
@@ -831,6 +840,30 @@ struct NightGuardView: View {
         upsertRecord(dayKey: key, status: reviewStatus, noteUpdate: .set(reviewNote))
         if key == dayKey(for: store.currentDay) {
             todayStatus = reviewStatus
+        }
+        showReviewSaveConfirmation()
+    }
+
+    private func showReviewSaveConfirmation() {
+        let message = [
+            "Saved. Your past self has been properly briefed.",
+            "Saved. Midnight-you has fewer excuses now.",
+            "Saved. The night log is safely tucked in."
+        ].randomElement() ?? "Saved."
+
+        reviewSaveDismissTask?.cancel()
+        withAnimation(.easeOut(duration: 0.18)) {
+            reviewSaveMessage = message
+        }
+
+        reviewSaveDismissTask = Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    reviewSaveMessage = nil
+                }
+            }
         }
     }
 

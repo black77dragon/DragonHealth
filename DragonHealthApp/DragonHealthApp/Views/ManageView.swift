@@ -24,7 +24,7 @@ struct ManageView: View {
                     MoreLinkRow(title: "Night Guard", subtitle: "Evening routine and reminders", systemImage: "moon.stars") {
                         NightGuardView()
                     }
-                    MoreLinkRow(title: "GLP-1 Review", subtitle: "Medication check-in and weekly reflection", systemImage: "pills") {
+                    MoreLinkRow(title: "GLP-1 Review", subtitle: "Dose planner, intake log, and weekly reflection", systemImage: "pills") {
                         DrugReviewView()
                     }
                     MoreLinkRow(title: "Today", subtitle: "Customize the Today screen", systemImage: "sun.max") {

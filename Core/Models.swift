@@ -368,6 +368,7 @@ public struct AppSettings: Hashable, Sendable {
     public var appearance: AppAppearance
     public var fontSize: AppFontSize
     public var mealSlotTimings: [MealSlotTiming]
+    public var glp1MedicationWeekday: Int
 
     public init(
         dayCutoffMinutes: Int,
@@ -382,7 +383,8 @@ public struct AppSettings: Hashable, Sendable {
         showLaunchSplash: Bool = false,
         appearance: AppAppearance = .system,
         fontSize: AppFontSize = .standard,
-        mealSlotTimings: [MealSlotTiming] = []
+        mealSlotTimings: [MealSlotTiming] = [],
+        glp1MedicationWeekday: Int = 1
     ) {
         self.dayCutoffMinutes = dayCutoffMinutes
         self.profileImagePath = profileImagePath
@@ -397,6 +399,7 @@ public struct AppSettings: Hashable, Sendable {
         self.appearance = appearance
         self.fontSize = fontSize
         self.mealSlotTimings = mealSlotTimings
+        self.glp1MedicationWeekday = min(max(glp1MedicationWeekday, 1), 7)
     }
 
     public static let defaultValue = AppSettings(dayCutoffMinutes: 4 * 60, showLaunchSplash: false)

@@ -406,7 +406,8 @@ public actor SQLiteDatabase: DBGateway {
                show_launch_splash,
                appearance_mode,
                font_size_mode,
-               meal_timing_json
+               meal_timing_json,
+               glp1_medication_weekday
         FROM app_settings
         WHERE id = 1;
         """
@@ -436,7 +437,8 @@ public actor SQLiteDatabase: DBGateway {
                 showLaunchSplash: sqlite3_column_int(statement, 9) != 0,
                 appearance: appearance,
                 fontSize: fontSize,
-                mealSlotTimings: mealSlotTimings
+                mealSlotTimings: mealSlotTimings,
+                glp1MedicationWeekday: Int(sqlite3_column_int(statement, 13))
             )
         }
         return Core.AppSettings.defaultValue
@@ -458,9 +460,10 @@ public actor SQLiteDatabase: DBGateway {
             show_launch_splash,
             appearance_mode,
             font_size_mode,
-            meal_timing_json
+            meal_timing_json,
+            glp1_medication_weekday
         )
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             day_cutoff_minutes = excluded.day_cutoff_minutes,
             profile_image_path = excluded.profile_image_path,
@@ -474,7 +477,8 @@ public actor SQLiteDatabase: DBGateway {
             show_launch_splash = excluded.show_launch_splash,
             appearance_mode = excluded.appearance_mode,
             font_size_mode = excluded.font_size_mode,
-            meal_timing_json = excluded.meal_timing_json;
+            meal_timing_json = excluded.meal_timing_json,
+            glp1_medication_weekday = excluded.glp1_medication_weekday;
         """
         let statement = try prepare(sql)
         defer { sqlite3_finalize(statement) }
@@ -491,6 +495,7 @@ public actor SQLiteDatabase: DBGateway {
         bindText(statement, index: 11, value: settings.appearance.rawValue)
         bindText(statement, index: 12, value: settings.fontSize.rawValue)
         bindText(statement, index: 13, value: encodeMealSlotTimings(settings.mealSlotTimings))
+        bindInt(statement, index: 14, value: settings.glp1MedicationWeekday)
         try step(statement)
     }
 
@@ -860,6 +865,56 @@ public actor SQLiteDatabase: DBGateway {
         return reflections
     }
 
+    public func upsertGLP1MedicationEntry(_ entry: Core.GLP1MedicationEntry) async throws {
+        let dayKey = DayBoundary(cutoffMinutes: 0).dayKey(for: entry.day, calendar: calendar)
+        let sql = """
+        INSERT INTO glp1_medication_entries (
+            id, day, medication, dose, is_taken, comment, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            day = excluded.day,
+            medication = excluded.medication,
+            dose = excluded.dose,
+            is_taken = excluded.is_taken,
+            comment = excluded.comment,
+            updated_at = excluded.updated_at;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindUUID(statement, index: 1, value: entry.id)
+        bindText(statement, index: 2, value: dayKey)
+        bindText(statement, index: 3, value: entry.medication.rawValue)
+        bindText(statement, index: 4, value: entry.dose.rawValue)
+        bindBool(statement, index: 5, value: entry.isTaken)
+        bindOptionalText(statement, index: 6, value: entry.comment)
+        bindDouble(statement, index: 7, value: entry.updatedAt.timeIntervalSince1970)
+        try step(statement)
+    }
+
+    public func fetchGLP1MedicationEntries() async throws -> [Core.GLP1MedicationEntry] {
+        let sql = """
+        SELECT id, day, medication, dose, is_taken, comment, updated_at
+        FROM glp1_medication_entries
+        ORDER BY day ASC, updated_at DESC;
+        """
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        var entries: [Core.GLP1MedicationEntry] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            entries.append(decodeGLP1MedicationEntry(statement))
+        }
+        return entries
+    }
+
+    public func deleteGLP1MedicationEntry(id: UUID) async throws {
+        let sql = "DELETE FROM glp1_medication_entries WHERE id = ?;"
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        bindUUID(statement, index: 1, value: id)
+        try step(statement)
+    }
+
     public func fetchBodyMetrics() async throws -> [Core.BodyMetricEntry] {
         let sql = """
         SELECT day, weight_kg, muscle_mass, body_fat_percent, waist_cm, steps, active_energy_kcal
@@ -1161,9 +1216,23 @@ public actor SQLiteDatabase: DBGateway {
             show_launch_splash INTEGER NOT NULL DEFAULT 1,
             appearance_mode TEXT NOT NULL DEFAULT 'system',
             font_size_mode TEXT NOT NULL DEFAULT 'standard',
-            meal_timing_json TEXT NOT NULL DEFAULT '[]'
+            meal_timing_json TEXT NOT NULL DEFAULT '[]',
+            glp1_medication_weekday INTEGER NOT NULL DEFAULT 1
         );
         """, db: db)
+
+        try execute("""
+        CREATE TABLE IF NOT EXISTS glp1_medication_entries (
+            id TEXT PRIMARY KEY,
+            day TEXT NOT NULL,
+            medication TEXT NOT NULL,
+            dose TEXT NOT NULL,
+            is_taken INTEGER NOT NULL DEFAULT 0,
+            comment TEXT,
+            updated_at REAL NOT NULL
+        );
+        """, db: db)
+        try execute("CREATE INDEX IF NOT EXISTS idx_glp1_medication_entries_day ON glp1_medication_entries(day);", db: db)
 
         try execute("""
         CREATE TABLE IF NOT EXISTS documents (
@@ -1331,7 +1400,22 @@ public actor SQLiteDatabase: DBGateway {
                 "show_launch_splash": "INTEGER NOT NULL DEFAULT 1",
                 "appearance_mode": "TEXT NOT NULL DEFAULT 'system'",
                 "font_size_mode": "TEXT NOT NULL DEFAULT 'standard'",
-                "meal_timing_json": "TEXT NOT NULL DEFAULT '[]'"
+                "meal_timing_json": "TEXT NOT NULL DEFAULT '[]'",
+                "glp1_medication_weekday": "INTEGER NOT NULL DEFAULT 1"
+            ],
+            db: db
+        )
+
+        try ensureColumns(
+            table: "glp1_medication_entries",
+            definitions: [
+                "id": "TEXT NOT NULL DEFAULT ''",
+                "day": "TEXT NOT NULL DEFAULT ''",
+                "medication": "TEXT NOT NULL DEFAULT 'mounjaro'",
+                "dose": "TEXT NOT NULL DEFAULT '5mg'",
+                "is_taken": "INTEGER NOT NULL DEFAULT 0",
+                "comment": "TEXT",
+                "updated_at": "REAL NOT NULL DEFAULT 0"
             ],
             db: db
         )
@@ -1554,6 +1638,22 @@ public actor SQLiteDatabase: DBGateway {
             whatWentWell: readOptionalText(statement, index: 3),
             whatDidNotWork: readOptionalText(statement, index: 4),
             whatToAdjust: readOptionalText(statement, index: 5)
+        )
+    }
+
+    private func decodeGLP1MedicationEntry(_ statement: OpaquePointer) -> Core.GLP1MedicationEntry {
+        let dayKey = readText(statement, index: 1)
+        let day = DayKeyParser.date(from: dayKey, timeZone: calendar.timeZone) ?? Date()
+        let medication = readOptionalText(statement, index: 2).flatMap(Core.GLP1Medication.init(rawValue:)) ?? .mounjaro
+        let dose = readOptionalText(statement, index: 3).flatMap(Core.GLP1Dose.init(rawValue:)) ?? .mg5
+        return Core.GLP1MedicationEntry(
+            id: readUUID(statement, index: 0),
+            day: day,
+            medication: medication,
+            dose: dose,
+            isTaken: readBool(statement, index: 4),
+            comment: readOptionalText(statement, index: 5),
+            updatedAt: Date(timeIntervalSince1970: readDouble(statement, index: 6))
         )
     }
 

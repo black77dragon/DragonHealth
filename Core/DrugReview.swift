@@ -252,6 +252,69 @@ public struct DrugReviewTrendPoint: Identifiable, Hashable, Sendable {
     }
 }
 
+public enum GLP1Medication: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case mounjaro
+    case wegovy
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .mounjaro:
+            return "Mounjaro"
+        case .wegovy:
+            return "Wegovy"
+        }
+    }
+}
+
+public enum GLP1Dose: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case mg5 = "5mg"
+    case mg7_5 = "7.5mg"
+    case mg10 = "10mg"
+    case mg12_5 = "12.5mg"
+
+    public var id: String { rawValue }
+
+    public var title: String { rawValue }
+}
+
+public struct GLP1MedicationEntry: Identifiable, Hashable, Sendable {
+    public let id: UUID
+    public let day: Date
+    public let medication: GLP1Medication
+    public let dose: GLP1Dose
+    public let isTaken: Bool
+    public let comment: String?
+    public let updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        day: Date,
+        medication: GLP1Medication,
+        dose: GLP1Dose,
+        isTaken: Bool,
+        comment: String? = nil,
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.day = day
+        self.medication = medication
+        self.dose = dose
+        self.isTaken = isTaken
+        self.comment = Self.normalizedText(comment)
+        self.updatedAt = updatedAt
+    }
+
+    private static func normalizedText(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+}
+
 public struct DrugReviewAnalytics: Sendable {
     public init() {}
 

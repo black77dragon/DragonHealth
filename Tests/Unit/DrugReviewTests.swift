@@ -144,6 +144,56 @@ final class DrugReviewTests: XCTestCase {
         XCTAssertEqual(storedEntry.mood, 10)
     }
 
+    func testSQLitePersistsMedicationEntriesAndDeletesThem() async throws {
+        let db = try makeDatabase()
+        let calendar = makeCalendar()
+        let firstDay = calendar.date(from: DateComponents(year: 2026, month: 3, day: 22))!
+        let secondDay = calendar.date(from: DateComponents(year: 2026, month: 3, day: 29))!
+
+        let plannedEntry = GLP1MedicationEntry(
+            day: firstDay,
+            medication: .mounjaro,
+            dose: .mg7_5,
+            isTaken: false,
+            comment: "Planned refill week."
+        )
+        let takenEntry = GLP1MedicationEntry(
+            day: secondDay,
+            medication: .wegovy,
+            dose: .mg10,
+            isTaken: true,
+            comment: "Taken after breakfast."
+        )
+
+        try await db.upsertGLP1MedicationEntry(plannedEntry)
+        try await db.upsertGLP1MedicationEntry(takenEntry)
+
+        let storedEntries = try await db.fetchGLP1MedicationEntries()
+        XCTAssertEqual(storedEntries.count, 2)
+        XCTAssertEqual(storedEntries[0].medication, .mounjaro)
+        XCTAssertEqual(storedEntries[0].dose, .mg7_5)
+        XCTAssertFalse(storedEntries[0].isTaken)
+        XCTAssertEqual(storedEntries[1].medication, .wegovy)
+        XCTAssertEqual(storedEntries[1].dose, .mg10)
+        XCTAssertTrue(storedEntries[1].isTaken)
+
+        try await db.deleteGLP1MedicationEntry(id: plannedEntry.id)
+        let entriesAfterDelete = try await db.fetchGLP1MedicationEntries()
+        XCTAssertEqual(entriesAfterDelete.map(\.id), [takenEntry.id])
+    }
+
+    func testSQLitePersistsPreferredMedicationWeekdayInSettings() async throws {
+        let db = try makeDatabase()
+
+        var settings = try await db.fetchSettings()
+        settings.glp1MedicationWeekday = 4
+
+        try await db.updateSettings(settings)
+
+        let storedSettings = try await db.fetchSettings()
+        XCTAssertEqual(storedSettings.glp1MedicationWeekday, 4)
+    }
+
     private func makeDatabase() throws -> SQLiteDatabase {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("dragonhealth-drug-review-\(UUID().uuidString)")

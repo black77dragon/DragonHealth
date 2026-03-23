@@ -29,6 +29,9 @@ public protocol DBGateway: Sendable {
     func upsertDrugReviewWeeklyReflection(_ reflection: Core.DrugReviewWeeklyReflection) async throws
     func fetchDrugReviewWeeklyReflection(for date: Date) async throws -> Core.DrugReviewWeeklyReflection?
     func fetchDrugReviewWeeklyReflections(start: Date, end: Date) async throws -> [Core.DrugReviewWeeklyReflection]
+    func upsertGLP1MedicationEntry(_ entry: Core.GLP1MedicationEntry) async throws
+    func fetchGLP1MedicationEntries() async throws -> [Core.GLP1MedicationEntry]
+    func deleteGLP1MedicationEntry(id: UUID) async throws
 
     func fetchBodyMetrics() async throws -> [Core.BodyMetricEntry]
     func upsertBodyMetric(_ entry: Core.BodyMetricEntry) async throws

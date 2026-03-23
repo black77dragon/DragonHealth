@@ -604,6 +604,40 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func fetchGLP1MedicationEntries() async -> [Core.GLP1MedicationEntry] {
+        guard let db else { return [] }
+        do {
+            return try await db.fetchGLP1MedicationEntries()
+        } catch {
+            handleOperationError("GLP-1 medication error", error)
+            return []
+        }
+    }
+
+    func saveGLP1MedicationEntry(_ entry: Core.GLP1MedicationEntry) async -> Bool {
+        guard let db else { return false }
+        do {
+            try await db.upsertGLP1MedicationEntry(entry)
+            invalidateDrugReview()
+            return true
+        } catch {
+            handleOperationError("GLP-1 medication error", error)
+            return false
+        }
+    }
+
+    func deleteGLP1MedicationEntry(_ entry: Core.GLP1MedicationEntry) async -> Bool {
+        guard let db else { return false }
+        do {
+            try await db.deleteGLP1MedicationEntry(id: entry.id)
+            invalidateDrugReview()
+            return true
+        } catch {
+            handleOperationError("GLP-1 medication error", error)
+            return false
+        }
+    }
+
     func saveDailyLog(_ log: Core.DailyLog) async {
         await dailyLogStore.saveDailyLog(log)
     }
